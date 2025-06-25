@@ -22,6 +22,20 @@ pub fn build(b: *std.Build) void {
     // target and optimize options) will be listed when running `zig build --help`
     // in this directory.
 
+    // Get dependencies (lazy loading)
+    const zcrypto = b.lazyDependency("zcrypto", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const zquic = b.lazyDependency("zquic", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const TokioZ = b.lazyDependency("TokioZ", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     // This creates a module, which represents a collection of source files alongside
     // some compilation options, such as optimization mode and linked system libraries.
     // Zig modules are the preferred way of making Zig code available to consumers.
@@ -29,6 +43,19 @@ pub fn build(b: *std.Build) void {
     // to our consumers. We must give it a name because a Zig package can expose
     // multiple modules and consumers will need to be able to specify which
     // module they want to access.
+    // Build imports list dynamically based on available dependencies
+    var imports = std.ArrayList(std.Build.Module.Import).init(b.allocator);
+    
+    if (zcrypto) |zcrypto_dep| {
+        imports.append(.{ .name = "zcrypto", .module = zcrypto_dep.module("zcrypto") }) catch @panic("OOM");
+    }
+    if (zquic) |zquic_dep| {
+        imports.append(.{ .name = "zquic", .module = zquic_dep.module("zquic") }) catch @panic("OOM");
+    }
+    if (TokioZ) |TokioZ_dep| {
+        imports.append(.{ .name = "TokioZ", .module = TokioZ_dep.module("TokioZ") }) catch @panic("OOM");
+    }
+
     const mod = b.addModule("zns", .{
         // The root source file is the "entry point" of this module. Users of
         // this module will only be able to access public declarations contained
@@ -40,6 +67,7 @@ pub fn build(b: *std.Build) void {
         // Later on we'll use this module as the root module of a test executable
         // which requires us to specify a target.
         .target = target,
+        .imports = imports.items,
     });
 
     // Here we define an executable. An executable needs to have a root module
