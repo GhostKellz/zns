@@ -92,10 +92,10 @@ pub const ENSResolver = struct {
         defer self.allocator.free(call_data);
         
         // Copy function signature
-        std.mem.copy(u8, call_data[0..10], function_sig);
+        @memcpy(call_data[0..10], function_sig);
         
         // Copy namehash (remove 0x prefix)
-        std.mem.copy(u8, call_data[10..], namehash[2..]);
+        @memcpy(call_data[10..], namehash[2..]);
         
         // Make eth_call
         const result = try self.rpc_client.ethCall(ENS_REGISTRY, call_data);
@@ -118,10 +118,10 @@ pub const ENSResolver = struct {
         defer self.allocator.free(call_data);
         
         // Copy function signature
-        std.mem.copy(u8, call_data[0..10], function_sig);
+        @memcpy(call_data[0..10], function_sig);
         
         // Copy namehash (remove 0x prefix)
-        std.mem.copy(u8, call_data[10..], namehash[2..]);
+        @memcpy(call_data[10..], namehash[2..]);
         
         // Add 0x prefix to resolver if needed
         var resolver_addr = resolver;
@@ -129,7 +129,7 @@ pub const ENSResolver = struct {
         if (!std.mem.startsWith(u8, resolver, "0x")) {
             resolver_buf[0] = '0';
             resolver_buf[1] = 'x';
-            std.mem.copy(u8, resolver_buf[2..], resolver);
+            @memcpy(resolver_buf[2..], resolver);
             resolver_addr = &resolver_buf;
         }
         
@@ -141,7 +141,7 @@ pub const ENSResolver = struct {
             var address = try self.allocator.alloc(u8, 42);
             address[0] = '0';
             address[1] = 'x';
-            std.mem.copy(u8, address[2..], result[result.len - 40..]);
+            @memcpy(address[2..], result[result.len - 40..]);
             return address;
         }
         

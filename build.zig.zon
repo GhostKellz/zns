@@ -35,13 +35,13 @@
         // ZCrypto for cryptographic operations
         .zcrypto = .{
             .url = "https://github.com/ghostkellz/zcrypto/archive/refs/heads/main.tar.gz",
-            .hash = "zcrypto-0.0.0-rgQAI8fbAwClmk2Me7c0fNLBtFWbukRh3ZgB2_IckfYz",
+            .hash = "zcrypto-0.5.0-rgQAI8ouBwCClV_t59bD7KJ13ZMoI3gjbv4a0E1uLr9o",
             .lazy = true,
         },
         // ZQuic for QUIC/HTTP3 support
         .zquic = .{
-            .url = "https://github.com/ghostkellz/zquic/archive/refs/heads/main.tar.gz", 
-            .hash = "zquic-0.0.0-2rPds70RBACjqjpX56l2uBf_2-qCgIvU9X7sSKg8-lTM",
+            .url = "https://github.com/ghostkellz/zquic/archive/refs/heads/main.tar.gz",
+            .hash = "zquic-0.4.0-2rPds3IBlBMVAfAvDBWynr3pV_zsxqUcaIxIfmZiMCnU",
             .lazy = true,
         },
         // TokioZ for async runtime
@@ -49,6 +49,11 @@
             .url = "https://github.com/ghostkellz/TokioZ/archive/refs/heads/main.tar.gz",
             .hash = "TokioZ-0.0.0-DgtPReljAgAuGaoLtQCm_E-UA_7j_TAGQ8kkV-mtjz4V",
             .lazy = true,
+        },
+        // ZQLite for persistent database storage
+        .zqlite = .{
+            .url = "https://github.com/ghostkellz/zqlite/archive/refs/heads/main.tar.gz",
+            .hash = "zqlite-0.7.0-0Cdu4jvfBwBXkuFggkf5fVvszwd-_0nVoIqCs2Wb--uB",
         },
     },
     // Specifies the set of files and directories that are included in this package.

@@ -26,7 +26,7 @@ pub const ChainType = enum {
     unknown,
     
     pub fn fromString(chain: []const u8) ChainType {
-        const map = std.ComptimeStringMap(ChainType, .{
+        const map = std.static_string_map.StaticStringMap(ChainType).initComptime(.{
             .{ "ethereum", .ethereum },
             .{ "eth", .ethereum },
             .{ "bitcoin", .bitcoin },
@@ -75,7 +75,7 @@ pub const CryptoAddress = struct {
 };
 
 /// Domain registry mapping TLDs to domain types
-pub const DOMAIN_REGISTRY = std.ComptimeStringMap(DomainType, .{
+pub const DOMAIN_REGISTRY = std.static_string_map.StaticStringMap(DomainType).initComptime(.{
     // GhostChain native domains
     .{ ".ghost", .ghost },
     .{ ".bc", .ghost },

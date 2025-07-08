@@ -24,7 +24,8 @@ pub const Args = struct {
     ghostbridge_endpoint: []const u8 = "http://localhost:9090",
     ethereum_rpc: []const u8 = "https://eth-mainnet.alchemyapi.io/v2/demo",
     unstoppable_api_key: ?[]const u8 = null,
-    
+    cache_db_path: ?[]const u8 = "zns_cache.db",
+
     pub const OutputFormat = enum {
         text,
         json,
@@ -36,25 +37,39 @@ pub const Args = struct {
 pub const CLI = struct {
     allocator: std.mem.Allocator,
     resolver: universal.UniversalResolver,
-    
+
     pub fn init(allocator: std.mem.Allocator, args: Args) CLI {
-        const resolver = universal.UniversalResolver.init(
-            allocator,
-            args.ghostbridge_endpoint,
-            args.ethereum_rpc,
-            args.unstoppable_api_key,
-        );
-        
+        const resolver = if (args.cache_db_path) |cache_path|
+            universal.createCachedUniversalResolver(
+                allocator,
+                args.ghostbridge_endpoint,
+                args.ethereum_rpc,
+                args.unstoppable_api_key,
+                cache_path,
+            ) catch universal.UniversalResolver.init(
+                allocator,
+                args.ghostbridge_endpoint,
+                args.ethereum_rpc,
+                args.unstoppable_api_key,
+            )
+        else
+            universal.UniversalResolver.init(
+                allocator,
+                args.ghostbridge_endpoint,
+                args.ethereum_rpc,
+                args.unstoppable_api_key,
+            );
+
         return CLI{
             .allocator = allocator,
             .resolver = resolver,
         };
     }
-    
+
     pub fn deinit(self: *CLI) void {
         self.resolver.deinit();
     }
-    
+
     /// Execute CLI command
     pub fn execute(self: *CLI, args: Args) !void {
         switch (args.command) {
@@ -68,15 +83,15 @@ pub const CLI = struct {
             .version => try self.cmdVersion(),
         }
     }
-    
+
     /// Resolve single domain
     fn cmdResolve(self: *CLI, args: Args) !void {
         const domain = args.domain orelse {
-            std.debug.print("Error: Domain required for resolve command\n");
+            std.debug.print("Error: Domain required for resolve command\n", .{});
             return;
         };
-        
-        const result = self.resolver.resolve(domain) catch |err| switch (err) {
+
+        var result = self.resolver.resolve(domain) catch |err| switch (err) {
             error.DomainNotFound => {
                 std.debug.print("Domain not found: {s}\n", .{domain});
                 return;
@@ -88,17 +103,17 @@ pub const CLI = struct {
             else => return err,
         };
         defer result.deinit(self.allocator);
-        
+
         try self.printCryptoAddress(result, args.output_format);
     }
-    
+
     /// Resolve all chains for domain
     fn cmdResolveAll(self: *CLI, args: Args) !void {
         const domain = args.domain orelse {
-            std.debug.print("Error: Domain required for resolve-all command\n");
+            std.debug.print("Error: Domain required for resolve-all command\n", .{});
             return;
         };
-        
+
         const results = self.resolver.resolveAll(domain) catch |err| switch (err) {
             error.DomainNotFound => {
                 std.debug.print("Domain not found: {s}\n", .{domain});
@@ -116,17 +131,17 @@ pub const CLI = struct {
             }
             self.allocator.free(results);
         }
-        
+
         try self.printMultipleAddresses(results, args.output_format);
     }
-    
+
     /// Batch resolve multiple domains
     fn cmdBatch(self: *CLI, args: Args) !void {
         const domains = args.domains orelse {
-            std.debug.print("Error: Domains required for batch command\n");
+            std.debug.print("Error: Domains required for batch command\n", .{});
             return;
         };
-        
+
         const results = try self.resolver.resolveBatch(domains);
         defer {
             for (results) |*result| {
@@ -134,52 +149,65 @@ pub const CLI = struct {
             }
             self.allocator.free(results);
         }
-        
+
         try self.printMultipleAddresses(results, args.output_format);
     }
-    
+
     /// Register new domain (placeholder)
     fn cmdRegister(self: *CLI, args: Args) !void {
         _ = self;
         const domain = args.domain orelse {
-            std.debug.print("Error: Domain required for register command\n");
+            std.debug.print("Error: Domain required for register command\n", .{});
             return;
         };
-        
+
         // TODO: Implement domain registration
         std.debug.print("Domain registration not yet implemented: {s}\n", .{domain});
     }
-    
+
     /// Show cache statistics
     fn cmdCacheStats(self: *CLI, args: Args) !void {
-        const stats = self.resolver.getCacheStats();
+        const stats = try self.resolver.getCacheStats();
         
-        switch (args.output_format) {
-            .text => {
-                std.debug.print("Cache Statistics:\n");
-                std.debug.print("  Total entries: {d}\n", .{stats.total_entries});
-                std.debug.print("  Expired entries: {d}\n", .{stats.expired_entries});
-                std.debug.print("  Active entries: {d}\n", .{stats.total_entries - stats.expired_entries});
-            },
-            .json => {
-                std.debug.print("{{\"total_entries\":{d},\"expired_entries\":{d},\"active_entries\":{d}}}\n", 
-                    .{ stats.total_entries, stats.expired_entries, stats.total_entries - stats.expired_entries });
-            },
-            .csv => {
-                std.debug.print("metric,value\n");
-                std.debug.print("total_entries,{d}\n", .{stats.total_entries});
-                std.debug.print("expired_entries,{d}\n", .{stats.expired_entries});
-                std.debug.print("active_entries,{d}\n", .{stats.total_entries - stats.expired_entries});
-            },
+        if (stats) |s| {
+            switch (args.output_format) {
+                .text => {
+                    std.debug.print("Cache Statistics:\n", .{});
+                    std.debug.print("  Total domains: {d}\n", .{s.total_domains});
+                    std.debug.print("  Total addresses: {d}\n", .{s.total_addresses});
+                    std.debug.print("  Expired entries: {d}\n", .{s.expired_entries});
+                    std.debug.print("  Cache hits: {d}\n", .{s.cache_hits});
+                    std.debug.print("  Cache misses: {d}\n", .{s.cache_misses});
+                    const hit_rate = if (s.cache_hits + s.cache_misses > 0) 
+                        @as(f64, @floatFromInt(s.cache_hits)) / @as(f64, @floatFromInt(s.cache_hits + s.cache_misses)) * 100.0
+                    else 0.0;
+                    std.debug.print("  Hit rate: {d:.2}%\n", .{hit_rate});
+                },
+                .json => {
+                    std.debug.print("{{\"total_domains\":{d},\"total_addresses\":{d},\"expired_entries\":{d},\"cache_hits\":{d},\"cache_misses\":{d}}}\n", .{ 
+                        s.total_domains, s.total_addresses, s.expired_entries, s.cache_hits, s.cache_misses 
+                    });
+                },
+                .csv => {
+                    std.debug.print("metric,value\n", .{});
+                    std.debug.print("total_domains,{d}\n", .{s.total_domains});
+                    std.debug.print("total_addresses,{d}\n", .{s.total_addresses});
+                    std.debug.print("expired_entries,{d}\n", .{s.expired_entries});
+                    std.debug.print("cache_hits,{d}\n", .{s.cache_hits});
+                    std.debug.print("cache_misses,{d}\n", .{s.cache_misses});
+                },
+            }
+        } else {
+            std.debug.print("Cache is not enabled\n", .{});
         }
     }
-    
+
     /// Clear cache
     fn cmdCacheClear(self: *CLI) !void {
-        self.resolver.clearCache();
-        std.debug.print("Cache cleared\n");
+        try self.resolver.clearCache();
+        std.debug.print("Cache cleared\n", .{});
     }
-    
+
     /// Show help
     fn cmdHelp(self: *CLI) !void {
         _ = self;
@@ -202,6 +230,7 @@ pub const CLI = struct {
             \\OPTIONS:
             \\    --chain <chain>            Filter by specific blockchain
             \\    --format <format>          Output format: text, json, csv
+            \\    --cache <path>             Enable persistent cache with ZQLite database
             \\    --ghostbridge <url>        GhostBridge endpoint
             \\    --ethereum-rpc <url>       Ethereum RPC endpoint
             \\    --unstoppable-key <key>    Unstoppable Domains API key
@@ -217,19 +246,19 @@ pub const CLI = struct {
             \\    .crypto, .nft, .x - Unstoppable Domains
             \\    .ghost, .bc, .kz  - GhostChain Native Domains
             \\
-        );
+        , .{});
     }
-    
+
     /// Show version
     fn cmdVersion(self: *CLI) !void {
         _ = self;
-        std.debug.print("ZNS Universal Crypto Domain Resolver v0.1.0\n");
+        std.debug.print("ZNS Universal Crypto Domain Resolver v0.1.0\n", .{});
     }
-    
+
     /// Print single crypto address
     fn printCryptoAddress(self: *CLI, address: types.CryptoAddress, format: Args.OutputFormat) !void {
         _ = self;
-        
+
         switch (format) {
             .text => {
                 std.debug.print("Domain: {s}\n", .{address.domain});
@@ -238,25 +267,23 @@ pub const CLI = struct {
                 std.debug.print("TTL:    {d}s\n", .{address.ttl});
             },
             .json => {
-                std.debug.print("{{\"domain\":\"{s}\",\"chain\":\"{s}\",\"address\":\"{s}\",\"ttl\":{d}}}\n",
-                    .{ address.domain, @tagName(address.chain), address.address, address.ttl });
+                std.debug.print("{{\"domain\":\"{s}\",\"chain\":\"{s}\",\"address\":\"{s}\",\"ttl\":{d}}}\n", .{ address.domain, @tagName(address.chain), address.address, address.ttl });
             },
             .csv => {
-                std.debug.print("domain,chain,address,ttl\n");
-                std.debug.print("{s},{s},{s},{d}\n", 
-                    .{ address.domain, @tagName(address.chain), address.address, address.ttl });
+                std.debug.print("domain,chain,address,ttl\n", .{});
+                std.debug.print("{s},{s},{s},{d}\n", .{ address.domain, @tagName(address.chain), address.address, address.ttl });
             },
         }
     }
-    
+
     /// Print multiple crypto addresses
     fn printMultipleAddresses(self: *CLI, addresses: []types.CryptoAddress, format: Args.OutputFormat) !void {
         _ = self;
-        
+
         switch (format) {
             .text => {
                 for (addresses, 0..) |address, i| {
-                    if (i > 0) std.debug.print("\n");
+                    if (i > 0) std.debug.print("\n", .{});
                     std.debug.print("Domain: {s}\n", .{address.domain});
                     std.debug.print("Chain:  {s}\n", .{@tagName(address.chain)});
                     std.debug.print("Address: {s}\n", .{address.address});
@@ -264,19 +291,17 @@ pub const CLI = struct {
                 }
             },
             .json => {
-                std.debug.print("[");
+                std.debug.print("[", .{});
                 for (addresses, 0..) |address, i| {
-                    if (i > 0) std.debug.print(",");
-                    std.debug.print("{{\"domain\":\"{s}\",\"chain\":\"{s}\",\"address\":\"{s}\",\"ttl\":{d}}}",
-                        .{ address.domain, @tagName(address.chain), address.address, address.ttl });
+                    if (i > 0) std.debug.print(",", .{});
+                    std.debug.print("{{\"domain\":\"{s}\",\"chain\":\"{s}\",\"address\":\"{s}\",\"ttl\":{d}}}", .{ address.domain, @tagName(address.chain), address.address, address.ttl });
                 }
-                std.debug.print("]\n");
+                std.debug.print("]\n", .{});
             },
             .csv => {
-                std.debug.print("domain,chain,address,ttl\n");
+                std.debug.print("domain,chain,address,ttl\n", .{});
                 for (addresses) |address| {
-                    std.debug.print("{s},{s},{s},{d}\n", 
-                        .{ address.domain, @tagName(address.chain), address.address, address.ttl });
+                    std.debug.print("{s},{s},{s},{d}\n", .{ address.domain, @tagName(address.chain), address.address, address.ttl });
                 }
             },
         }
@@ -288,9 +313,9 @@ pub fn parseArgs(allocator: std.mem.Allocator, argv: [][]const u8) !Args {
     if (argv.len < 2) {
         return Args{ .command = .help };
     }
-    
+
     var args = Args{ .command = .help };
-    
+
     // Parse command
     const cmd_str = argv[1];
     if (std.mem.eql(u8, cmd_str, "resolve")) {
@@ -325,12 +350,12 @@ pub fn parseArgs(allocator: std.mem.Allocator, argv: [][]const u8) !Args {
     } else {
         args.command = .help;
     }
-    
+
     // Parse options
     var i: usize = 3;
     while (i < argv.len) {
         const arg = argv[i];
-        
+
         if (std.mem.eql(u8, arg, "--format") and i + 1 < argv.len) {
             const format_str = argv[i + 1];
             if (std.mem.eql(u8, format_str, "json")) {
@@ -357,17 +382,17 @@ pub fn parseArgs(allocator: std.mem.Allocator, argv: [][]const u8) !Args {
             i += 1;
         }
     }
-    
+
     return args;
 }
 
 test "argument parsing" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    
+
     const argv = &[_][]const u8{ "zns", "resolve", "alice.eth", "--format", "json" };
-    const args = try parseArgs(arena.allocator(), argv);
-    
+    const args = try parseArgs(arena.allocator(), @constCast(argv));
+
     try std.testing.expectEqual(Command.resolve, args.command);
     try std.testing.expectEqualStrings("alice.eth", args.domain.?);
     try std.testing.expectEqual(Args.OutputFormat.json, args.output_format);

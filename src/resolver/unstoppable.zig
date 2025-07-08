@@ -18,114 +18,56 @@ pub const UnstoppableResolver = struct {
         };
     }
     
-    /// Unstoppable Domains API response format
-    const UnstoppableResponse = struct {
-        meta: struct {
-            domain: []const u8,
-            owner: ?[]const u8 = null,
-            resolver: ?[]const u8 = null,
-            registry: ?[]const u8 = null,
-            reverse: bool = false,
-        },
-        records: std.json.ObjectMap,
-    };
-    
     /// Resolve Unstoppable domain to crypto addresses
     pub fn resolve(self: *UnstoppableResolver, domain: []const u8) !types.CryptoAddress {
         const url = try std.fmt.allocPrint(self.allocator, 
             "{s}/domains/{s}", .{ UNSTOPPABLE_API, domain });
         defer self.allocator.free(url);
         
-        // Prepare headers
-        var headers = std.ArrayList(client.HttpClient.HttpHeader).init(self.allocator);
-        defer headers.deinit();
-        
-        try headers.append(.{ .name = "Accept", .value = "application/json" });
-        
-        if (self.api_key) |api_key| {
-            const auth_header = try std.fmt.allocPrint(self.allocator, 
-                "Bearer {s}", .{api_key});
-            defer self.allocator.free(auth_header);
-            
-            try headers.append(.{ .name = "Authorization", .value = auth_header });
-        }
-        
         // Make request
-        const response = try self.http_client.get(url, .{
-            .headers = headers.items,
-        });
-        defer response.body[0..].deinit(self.allocator);
+        var response = try self.http_client.get(url, .{});
+        defer response.deinit(self.allocator);
         
         if (response.status_code != 200) {
             return error.DomainNotFound;
         }
         
-        // Parse response
-        var arena = std.heap.ArenaAllocator.init(self.allocator);
-        defer arena.deinit();
-        
-        const parsed = try std.json.parseFromSlice(UnstoppableResponse, 
-            arena.allocator(), response.body, .{});
-        
-        // Find the best crypto address
-        const crypto_addr = try self.extractCryptoAddress(domain, parsed.value.records);
-        defer self.allocator.free(crypto_addr.address);
-        
+        // Parse response to find crypto addresses
+        const crypto_addr = try self.extractCryptoAddressFromJson(domain, response.body);
         return crypto_addr;
     }
     
-    /// Extract crypto address from records
-    fn extractCryptoAddress(self: *UnstoppableResolver, domain: []const u8, records: std.json.ObjectMap) !types.CryptoAddress {
+    /// Extract crypto address from JSON response
+    fn extractCryptoAddressFromJson(self: *UnstoppableResolver, domain: []const u8, json_str: []const u8) !types.CryptoAddress {
         // Priority order for crypto currencies
         const crypto_keys = [_]struct {
             key: []const u8,
             chain: types.ChainType,
         }{
-            .{ .key = "crypto.ETH.address", .chain = .ethereum },
-            .{ .key = "crypto.BTC.address", .chain = .bitcoin },
-            .{ .key = "crypto.MATIC.address", .chain = .polygon },
-            .{ .key = "crypto.SOL.address", .chain = .solana },
-            .{ .key = "crypto.AVAX.address", .chain = .avalanche },
-            .{ .key = "crypto.BNB.address", .chain = .bsc },
-            .{ .key = "crypto.FTM.address", .chain = .fantom },
+            .{ .key = "\"crypto.ETH.address\":\"", .chain = .ethereum },
+            .{ .key = "\"crypto.BTC.address\":\"", .chain = .bitcoin },
+            .{ .key = "\"crypto.MATIC.address\":\"", .chain = .polygon },
+            .{ .key = "\"crypto.SOL.address\":\"", .chain = .solana },
+            .{ .key = "\"crypto.AVAX.address\":\"", .chain = .avalanche },
+            .{ .key = "\"crypto.BNB.address\":\"", .chain = .bsc },
+            .{ .key = "\"crypto.FTM.address\":\"", .chain = .fantom },
         };
         
         // Try to find crypto addresses in priority order
         for (crypto_keys) |crypto_key| {
-            if (records.get(crypto_key.key)) |value| {
-                if (value == .string and value.string.len > 0) {
-                    return types.CryptoAddress.init(
-                        self.allocator, 
-                        domain, 
-                        crypto_key.chain, 
-                        value.string
-                    );
+            if (std.mem.indexOf(u8, json_str, crypto_key.key)) |key_pos| {
+                const addr_start = key_pos + crypto_key.key.len;
+                if (std.mem.indexOf(u8, json_str[addr_start..], "\"")) |quote_pos| {
+                    const address = json_str[addr_start..addr_start + quote_pos];
+                    if (address.len > 0) {
+                        return types.CryptoAddress.init(
+                            self.allocator, 
+                            domain, 
+                            crypto_key.chain,
+                            address
+                        );
+                    }
                 }
-            }
-        }
-        
-        // Fallback: look for any crypto address
-        var it = records.iterator();
-        while (it.next()) |entry| {
-            const key = entry.key_ptr.*;
-            const value = entry.value_ptr.*;
-            
-            if (std.mem.startsWith(u8, key, "crypto.") and 
-                std.mem.endsWith(u8, key, ".address") and
-                value == .string and value.string.len > 0) {
-                
-                // Extract chain name from key (crypto.{CHAIN}.address)
-                const chain_start = "crypto.".len;
-                const chain_end = key.len - ".address".len;
-                const chain_name = key[chain_start..chain_end];
-                const chain = types.ChainType.fromString(chain_name);
-                
-                return types.CryptoAddress.init(
-                    self.allocator, 
-                    domain, 
-                    chain, 
-                    value.string
-                );
             }
         }
         
@@ -139,46 +81,46 @@ pub const UnstoppableResolver = struct {
         defer self.allocator.free(url);
         
         // Make request
-        const response = try self.http_client.get(url, .{});
-        defer response.body[0..].deinit(self.allocator);
+        var response = try self.http_client.get(url, .{});
+        defer response.deinit(self.allocator);
         
         if (response.status_code != 200) {
             return error.DomainNotFound;
         }
         
-        // Parse response
-        var arena = std.heap.ArenaAllocator.init(self.allocator);
-        defer arena.deinit();
-        
-        const parsed = try std.json.parseFromSlice(UnstoppableResponse, 
-            arena.allocator(), response.body, .{});
-        
         // Extract all crypto addresses
         var addresses = std.ArrayList(types.CryptoAddress).init(self.allocator);
         defer addresses.deinit();
         
-        var it = parsed.value.records.iterator();
-        while (it.next()) |entry| {
-            const key = entry.key_ptr.*;
-            const value = entry.value_ptr.*;
-            
-            if (std.mem.startsWith(u8, key, "crypto.") and 
-                std.mem.endsWith(u8, key, ".address") and
-                value == .string and value.string.len > 0) {
-                
-                // Extract chain name
-                const chain_start = "crypto.".len;
-                const chain_end = key.len - ".address".len;
-                const chain_name = key[chain_start..chain_end];
-                const chain = types.ChainType.fromString(chain_name);
-                
-                const addr = try types.CryptoAddress.init(
-                    self.allocator, 
-                    domain, 
-                    chain, 
-                    value.string
-                );
-                try addresses.append(addr);
+        // Search for all crypto addresses in JSON
+        const crypto_patterns = [_]struct {
+            pattern: []const u8,
+            chain: types.ChainType,
+        }{
+            .{ .pattern = "\"crypto.ETH.address\":\"", .chain = .ethereum },
+            .{ .pattern = "\"crypto.BTC.address\":\"", .chain = .bitcoin },
+            .{ .pattern = "\"crypto.MATIC.address\":\"", .chain = .polygon },
+            .{ .pattern = "\"crypto.SOL.address\":\"", .chain = .solana },
+            .{ .pattern = "\"crypto.AVAX.address\":\"", .chain = .avalanche },
+            .{ .pattern = "\"crypto.BNB.address\":\"", .chain = .bsc },
+            .{ .pattern = "\"crypto.FTM.address\":\"", .chain = .fantom },
+        };
+        
+        for (crypto_patterns) |pattern| {
+            if (std.mem.indexOf(u8, response.body, pattern.pattern)) |key_pos| {
+                const addr_start = key_pos + pattern.pattern.len;
+                if (std.mem.indexOf(u8, response.body[addr_start..], "\"")) |quote_pos| {
+                    const address = response.body[addr_start..addr_start + quote_pos];
+                    if (address.len > 0) {
+                        const addr = try types.CryptoAddress.init(
+                            self.allocator, 
+                            domain, 
+                            pattern.chain,
+                            address
+                        );
+                        try addresses.append(addr);
+                    }
+                }
             }
         }
         

@@ -35,6 +35,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const zqlite = b.lazyDependency("zqlite", .{
+        .target = target,
+        .optimize = optimize,
+    });
 
     // This creates a module, which represents a collection of source files alongside
     // some compilation options, such as optimization mode and linked system libraries.
@@ -54,6 +58,9 @@ pub fn build(b: *std.Build) void {
     }
     if (TokioZ) |TokioZ_dep| {
         imports.append(.{ .name = "TokioZ", .module = TokioZ_dep.module("TokioZ") }) catch @panic("OOM");
+    }
+    if (zqlite) |zqlite_dep| {
+        imports.append(.{ .name = "zqlite", .module = zqlite_dep.module("zqlite") }) catch @panic("OOM");
     }
 
     const mod = b.addModule("zns", .{

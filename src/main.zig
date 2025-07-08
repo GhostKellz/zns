@@ -22,6 +22,12 @@ pub fn main() !void {
         std.debug.print("Error parsing arguments\n", .{});
         return;
     };
+    defer {
+        // Free domains array if it was allocated
+        if (args.domains) |domains| {
+            allocator.free(domains);
+        }
+    }
     
     // Initialize CLI
     var cli = zns.cli.commands.CLI.init(allocator, args);
@@ -30,19 +36,15 @@ pub fn main() !void {
     // Execute command
     cli.execute(args) catch |err| switch (err) {
         error.DomainNotFound => {
-            std.debug.print("Domain not found\n");
+            std.debug.print("Domain not found\n", .{});
             std.process.exit(1);
         },
         error.UnsupportedDomain => {
-            std.debug.print("Unsupported domain type\n");
-            std.process.exit(1);
-        },
-        error.NetworkError => {
-            std.debug.print("Network error occurred\n");
+            std.debug.print("Unsupported domain type\n", .{});
             std.process.exit(1);
         },
         error.OutOfMemory => {
-            std.debug.print("Out of memory\n");
+            std.debug.print("Out of memory\n", .{});
             std.process.exit(1);
         },
         else => {

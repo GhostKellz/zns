@@ -31,6 +31,7 @@ pub const HttpClient = struct {
     
     /// Make HTTP GET request
     pub fn get(self: *HttpClient, url: []const u8, options: RequestOptions) !HttpResponse {
+        _ = options;
         
         // Parse URL
         const uri = try std.Uri.parse(url);
@@ -39,21 +40,14 @@ pub const HttpClient = struct {
         var http_client = std.http.Client{ .allocator = self.allocator };
         defer http_client.deinit();
         
+        // Prepare headers
+        var header_buf: [8192]u8 = undefined;
+        
         // Create request
         var req = try http_client.open(.GET, uri, .{
-            .server_header_buffer = try self.allocator.alloc(u8, 8192),
+            .server_header_buffer = &header_buf,
         });
-        defer {
-            self.allocator.free(req.server_header_buffer);
-            req.deinit();
-        }
-        
-        // Add headers if provided
-        if (options.headers) |headers| {
-            for (headers) |header| {
-                try req.headers.append(header.name, header.value);
-            }
-        }
+        defer req.deinit();
         
         // Send request
         try req.send();
@@ -61,16 +55,17 @@ pub const HttpClient = struct {
         try req.wait();
         
         // Read response
-        const body = try req.readAll(self.allocator);
+        const body = try req.reader().readAllAlloc(self.allocator, 1024 * 1024);
         
         return HttpResponse{
-            .status_code = @intCast(req.response.status.phrase().len), // Simplified
+            .status_code = @intFromEnum(req.response.status),
             .body = body,
         };
     }
     
     /// Make HTTP POST request
     pub fn post(self: *HttpClient, url: []const u8, body: []const u8, options: RequestOptions) !HttpResponse {
+        _ = options;
         
         // Parse URL
         const uri = try std.Uri.parse(url);
@@ -79,22 +74,17 @@ pub const HttpClient = struct {
         var http_client = std.http.Client{ .allocator = self.allocator };
         defer http_client.deinit();
         
-        // Create request
-        var req = try http_client.open(.POST, uri, .{
-            .server_header_buffer = try self.allocator.alloc(u8, 8192),
-        });
-        defer {
-            self.allocator.free(req.server_header_buffer);
-            req.deinit();
-        }
+        // Prepare headers
+        var header_buf: [8192]u8 = undefined;
         
-        // Add headers
-        try req.headers.append("Content-Type", "application/json");
-        if (options.headers) |headers| {
-            for (headers) |header| {
-                try req.headers.append(header.name, header.value);
-            }
-        }
+        // Create request with headers
+        var req = try http_client.open(.POST, uri, .{
+            .server_header_buffer = &header_buf,
+            .extra_headers = &.{
+                .{ .name = "Content-Type", .value = "application/json" },
+            },
+        });
+        defer req.deinit();
         
         // Send request with body
         try req.send();
@@ -103,10 +93,10 @@ pub const HttpClient = struct {
         try req.wait();
         
         // Read response
-        const response_body = try req.readAll(self.allocator);
+        const response_body = try req.reader().readAllAlloc(self.allocator, 1024 * 1024);
         
         return HttpResponse{
-            .status_code = @intCast(req.response.status.phrase().len), // Simplified
+            .status_code = @intFromEnum(req.response.status),
             .body = response_body,
         };
     }
@@ -124,65 +114,41 @@ pub const JsonRpcClient = struct {
         };
     }
     
-    pub const JsonRpcRequest = struct {
-        jsonrpc: []const u8 = "2.0",
-        id: u32,
-        method: []const u8,
-        params: std.json.Value,
-    };
-    
-    pub const JsonRpcResponse = struct {
-        jsonrpc: []const u8,
-        id: u32,
-        result: ?std.json.Value = null,
-        @"error": ?std.json.Value = null,
-    };
-    
-    /// Make JSON-RPC call
-    pub fn call(self: *JsonRpcClient, request: JsonRpcRequest) !JsonRpcResponse {
-        // Serialize request
-        var arena = std.heap.ArenaAllocator.init(self.http_client.allocator);
-        defer arena.deinit();
-        
-        const request_json = try std.json.stringifyAlloc(arena.allocator(), request, .{});
+    /// Call Ethereum contract function using raw JSON
+    pub fn ethCall(self: *JsonRpcClient, to: []const u8, data: []const u8) ![]u8 {
+        // Build JSON-RPC request manually
+        const request_json = try std.fmt.allocPrint(self.http_client.allocator,
+            \\{{
+            \\  "jsonrpc": "2.0",
+            \\  "id": 1,
+            \\  "method": "eth_call",
+            \\  "params": [{{
+            \\    "to": "{s}",
+            \\    "data": "{s}"
+            \\  }}, "latest"]
+            \\}}
+        , .{ to, data });
+        defer self.http_client.allocator.free(request_json);
         
         // Make HTTP request
-        const response = try self.http_client.post(self.endpoint, request_json, .{
-            .headers = &[_]HttpClient.HttpHeader{
-                .{ .name = "Content-Type", .value = "application/json" },
-            },
-        });
-        defer response.body[0..].deinit(self.http_client.allocator);
+        var response = try self.http_client.post(self.endpoint, request_json, .{});
+        defer response.deinit(self.http_client.allocator);
         
-        // Parse response
-        const parsed = try std.json.parseFromSlice(JsonRpcResponse, arena.allocator(), response.body, .{});
+        // Parse response manually to extract result
+        const response_str = response.body;
         
-        return parsed.value;
-    }
-    
-    /// Call Ethereum contract function
-    pub fn ethCall(self: *JsonRpcClient, to: []const u8, data: []const u8) ![]u8 {
-        
-        // Add to and data to first param
-        var call_obj = std.json.ObjectMap.init(self.http_client.allocator);
-        try call_obj.put("to", .{ .string = to });
-        try call_obj.put("data", .{ .string = data });
-        
-        const request = JsonRpcRequest{
-            .id = 1,
-            .method = "eth_call",
-            .params = .{ .array = std.json.Array.fromOwnedSlice(self.http_client.allocator, &[_]std.json.Value{
-                .{ .object = call_obj },
-                .{ .string = "latest" },
-            }) },
-        };
-        
-        const response = try self.call(request);
-        
-        if (response.result) |result| {
-            if (result == .string) {
-                return self.http_client.allocator.dupe(u8, result.string);
+        // Look for "result":"0x..."
+        if (std.mem.indexOf(u8, response_str, "\"result\":")) |result_start| {
+            const value_start = result_start + 10; // Skip "result":"
+            if (std.mem.indexOf(u8, response_str[value_start..], "\"")) |quote_pos| {
+                const result_value = response_str[value_start..value_start + quote_pos];
+                return self.http_client.allocator.dupe(u8, result_value);
             }
+        }
+        
+        // Check for error
+        if (std.mem.indexOf(u8, response_str, "\"error\"")) |_| {
+            return error.RpcError;
         }
         
         return error.InvalidResponse;

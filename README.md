@@ -258,7 +258,7 @@ zns batch vitalik.eth,brad.crypto
 
 ## 🧬 License
 
-MIT License © CK Technology LLC 2025
+Apache 2.0 License © CK Technology LLC 2025
 
 ---
 

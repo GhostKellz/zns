@@ -3,8 +3,9 @@ const types = @import("types.zig");
 const ens = @import("ens.zig");
 const unstoppable = @import("unstoppable.zig");
 const ghost = @import("ghost.zig");
+const zqlite_cache = @import("../cache/zqlite_cache.zig");
 
-/// Universal resolver for all crypto domains
+/// Universal resolver for all crypto domains with persistent caching
 pub const UniversalResolver = struct {
     allocator: std.mem.Allocator,
     
@@ -13,17 +14,8 @@ pub const UniversalResolver = struct {
     ens_resolver: ens.ENSResolver,
     unstoppable_resolver: unstoppable.UnstoppableResolver,
     
-    // Cache for resolved domains
-    cache: std.HashMap([]const u8, CacheEntry, std.hash_map.StringContext, 80),
-    
-    const CacheEntry = struct {
-        address: types.CryptoAddress,
-        expires_at: i64,
-        
-        pub fn isExpired(self: *const CacheEntry) bool {
-            return std.time.timestamp() > self.expires_at;
-        }
-    };
+    // ZQLite persistent cache
+    cache: ?zqlite_cache.ZQLiteCache,
     
     pub fn init(
         allocator: std.mem.Allocator,
@@ -36,35 +28,35 @@ pub const UniversalResolver = struct {
             .ghost_resolver = ghost.GhostResolver.init(allocator, ghostbridge_endpoint),
             .ens_resolver = ens.ENSResolver.init(allocator, ethereum_rpc_url),
             .unstoppable_resolver = unstoppable.UnstoppableResolver.init(allocator, unstoppable_api_key),
-            .cache = std.HashMap([]const u8, CacheEntry, std.hash_map.StringContext, 80).init(allocator),
+            .cache = null,
         };
     }
     
+    /// Initialize with ZQLite cache
+    pub fn initWithCache(
+        allocator: std.mem.Allocator,
+        ghostbridge_endpoint: []const u8,
+        ethereum_rpc_url: []const u8,
+        unstoppable_api_key: ?[]const u8,
+        cache_db_path: []const u8,
+    ) !UniversalResolver {
+        var resolver = init(allocator, ghostbridge_endpoint, ethereum_rpc_url, unstoppable_api_key);
+        resolver.cache = try zqlite_cache.ZQLiteCache.init(allocator, cache_db_path);
+        return resolver;
+    }
+    
     pub fn deinit(self: *UniversalResolver) void {
-        // Clean up cache
-        var it = self.cache.iterator();
-        while (it.next()) |entry| {
-            self.allocator.free(entry.key_ptr.*);
-            entry.value_ptr.address.deinit(self.allocator);
+        if (self.cache) |*cache| {
+            cache.deinit();
         }
-        self.cache.deinit();
     }
     
     /// Resolve any crypto domain to address
     pub fn resolve(self: *UniversalResolver, domain: []const u8) !types.CryptoAddress {
-        // Check cache first
-        if (self.cache.get(domain)) |entry| {
-            if (!entry.isExpired()) {
-                // Return cached result (clone to avoid memory issues)
-                return types.CryptoAddress.init(
-                    self.allocator,
-                    entry.address.domain,
-                    entry.address.chain,
-                    entry.address.address
-                );
-            } else {
-                // Remove expired entry
-                self.cache.remove(domain);
+        // Check cache first if available
+        if (self.cache) |*cache| {
+            if (try cache.get(domain)) |cached| {
+                return cached;
             }
         }
         
@@ -81,8 +73,18 @@ pub const UniversalResolver = struct {
             .handshake => return error.UnsupportedDomain, // TODO: Implement Handshake
         };
         
-        // Cache the result
-        try self.cacheResult(domain, result);
+        // Cache the result if cache is available
+        if (self.cache) |*cache| {
+            const resolver_name = switch (domain_type) {
+                .ghost => "GhostResolver",
+                .ens => "ENSResolver",
+                .unstoppable => "UnstoppableResolver",
+                .traditional => "DNSResolver",
+                else => "UnknownResolver",
+            };
+            
+            try cache.put(domain, result, resolver_name);
+        }
         
         return result;
     }
@@ -92,13 +94,10 @@ pub const UniversalResolver = struct {
         var results = try self.allocator.alloc(types.CryptoAddress, domains.len);
         
         // For now, resolve sequentially
-        // TODO: Implement parallel resolution with threading
+        // TODO: Implement parallel resolution with TokioZ
         for (domains, 0..) |domain, i| {
             results[i] = self.resolve(domain) catch |err| switch (err) {
-                error.DomainNotFound => {
-                    // Create empty result for not found domains
-                    try types.CryptoAddress.init(self.allocator, domain, .unknown, "");
-                },
+                error.DomainNotFound => try types.CryptoAddress.init(self.allocator, domain, .unknown, ""),
                 else => return err,
             };
         }
@@ -108,10 +107,18 @@ pub const UniversalResolver = struct {
     
     /// Get all crypto addresses for a domain (multi-chain)
     pub fn resolveAll(self: *UniversalResolver, domain: []const u8) ![]types.CryptoAddress {
+        // Check cache first if available
+        if (self.cache) |*cache| {
+            const cached = try cache.getAll(domain);
+            if (cached.len > 0) {
+                return cached;
+            }
+        }
+        
         const tld = types.extractTLD(domain);
         const domain_type = types.getDomainType(tld);
         
-        switch (domain_type) {
+        const results = switch (domain_type) {
             .unstoppable => {
                 // Unstoppable Domains support multiple chains
                 return self.unstoppable_resolver.resolveAll(domain);
@@ -119,12 +126,26 @@ pub const UniversalResolver = struct {
             .ens, .ghost => {
                 // Single chain domains
                 const result = try self.resolve(domain);
-                var results = try self.allocator.alloc(types.CryptoAddress, 1);
-                results[0] = result;
-                return results;
+                var single_result = try self.allocator.alloc(types.CryptoAddress, 1);
+                single_result[0] = result;
+                return single_result;
             },
             else => return error.UnsupportedDomain,
+        };
+        
+        // Cache all results if cache is available
+        if (self.cache) |*cache| {
+            const resolver_name = switch (domain_type) {
+                .ghost => "GhostResolver",
+                .ens => "ENSResolver",
+                .unstoppable => "UnstoppableResolver",
+                else => "UnknownResolver",
+            };
+            
+            try cache.putAll(domain, results, resolver_name);
         }
+        
+        return results;
     }
     
     /// Resolve traditional DNS TXT records for crypto addresses
@@ -136,18 +157,6 @@ pub const UniversalResolver = struct {
         // Look for records like "crypto.ETH.address=0x..."
         
         return error.DomainNotFound;
-    }
-    
-    /// Cache resolution result
-    fn cacheResult(self: *UniversalResolver, domain: []const u8, address: types.CryptoAddress) !void {
-        const domain_key = try self.allocator.dupe(u8, domain);
-        
-        const cache_entry = CacheEntry{
-            .address = address,
-            .expires_at = std.time.timestamp() + address.ttl,
-        };
-        
-        try self.cache.put(domain_key, cache_entry);
     }
     
     /// Check if domain is supported
@@ -164,37 +173,52 @@ pub const UniversalResolver = struct {
     }
     
     /// Clear cache
-    pub fn clearCache(self: *UniversalResolver) void {
-        var it = self.cache.iterator();
-        while (it.next()) |entry| {
-            self.allocator.free(entry.key_ptr.*);
-            entry.value_ptr.address.deinit(self.allocator);
+    pub fn clearCache(self: *UniversalResolver) !void {
+        if (self.cache) |*cache| {
+            try cache.cleanup();
         }
-        self.cache.clearAndFree();
     }
     
     /// Get cache statistics
-    pub fn getCacheStats(self: *UniversalResolver) struct {
-        total_entries: u32,
-        expired_entries: u32,
-    } {
-        var total: u32 = 0;
-        var expired: u32 = 0;
-        
-        var it = self.cache.iterator();
-        while (it.next()) |entry| {
-            total += 1;
-            if (entry.value_ptr.isExpired()) {
-                expired += 1;
-            }
+    pub fn getCacheStats(self: *UniversalResolver) !?zqlite_cache.ZQLiteCache.CacheStats {
+        if (self.cache) |*cache| {
+            return try cache.getStats();
         }
-        
-        return .{
-            .total_entries = total,
-            .expired_entries = expired,
-        };
+        return null;
+    }
+    
+    /// Store metadata for a domain
+    pub fn putMetadata(self: *UniversalResolver, domain: []const u8, key: []const u8, value: []const u8) !void {
+        if (self.cache) |*cache| {
+            try cache.putMetadata(domain, key, value);
+        }
+    }
+    
+    /// Get metadata for a domain
+    pub fn getMetadata(self: *UniversalResolver, domain: []const u8, key: []const u8) !?[]const u8 {
+        if (self.cache) |*cache| {
+            return try cache.getMetadata(domain, key);
+        }
+        return null;
     }
 };
+
+/// Create a cached universal resolver with all resolvers wrapped in caching
+pub fn createCachedUniversalResolver(
+    allocator: std.mem.Allocator,
+    ghostbridge_endpoint: []const u8,
+    ethereum_rpc_url: []const u8,
+    unstoppable_api_key: ?[]const u8,
+    cache_db_path: []const u8,
+) !UniversalResolver {
+    return try UniversalResolver.initWithCache(
+        allocator,
+        ghostbridge_endpoint,
+        ethereum_rpc_url,
+        unstoppable_api_key,
+        cache_db_path,
+    );
+}
 
 test "Universal resolver domain type detection" {
     try std.testing.expect(UniversalResolver.supports("alice.eth"));

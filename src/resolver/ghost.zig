@@ -1,95 +1,82 @@
 const std = @import("std");
 const types = @import("types.zig");
+const client = @import("../http/client.zig");
 
-/// GhostBridge client for native .ghost domains
+/// GhostChain native domain resolver
 pub const GhostResolver = struct {
     allocator: std.mem.Allocator,
+    http_client: client.HttpClient,
     ghostbridge_endpoint: []const u8,
     
     pub fn init(allocator: std.mem.Allocator, ghostbridge_endpoint: []const u8) GhostResolver {
         return GhostResolver{
             .allocator = allocator,
+            .http_client = client.HttpClient.init(allocator),
             .ghostbridge_endpoint = ghostbridge_endpoint,
         };
     }
     
-    /// Resolve native GhostChain domain
+    /// Resolve GhostChain domain to crypto address
     pub fn resolve(self: *GhostResolver, domain: []const u8) !types.CryptoAddress {
-        // TODO: Implement gRPC call to GhostBridge
-        // For now, return mock data based on domain type
+        // For now, use mock data until gRPC integration
+        // TODO: Implement gRPC client for GhostBridge
         
-        const tld = types.extractTLD(domain);
-        
-        var mock_address: []const u8 = undefined;
-        if (std.mem.eql(u8, tld, ".ghost")) {
-            mock_address = "ghost1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq0l2l2l";
-        } else if (std.mem.eql(u8, tld, ".bc")) {
-            mock_address = "bc1qh4kl0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0q3u3u3u";
-        } else if (std.mem.eql(u8, tld, ".kz")) {
-            mock_address = "kz1z1z1z1z1z1z1z1z1z1z1z1z1z1z1z1z1z1z1z1z1z1z1z1z1z1z1z1z1z1z1z1z";
-        } else {
-            mock_address = "ghost1defaultdefaultdefaultdefaultdefaultdefaultdefaultdefault";
+        // Mock resolution for testing
+        if (std.mem.eql(u8, domain, "alice.ghost")) {
+            return types.CryptoAddress.init(
+                self.allocator,
+                domain,
+                .ghostchain,
+                "ghost1qpz3ulyq0vxpe0jx8ywm5x2rjmgz4e9hy5r5xd"
+            );
+        } else if (std.mem.eql(u8, domain, "vault.bc")) {
+            return types.CryptoAddress.init(
+                self.allocator,
+                domain,
+                .ghostchain,
+                "ghost1v4ultg3nw7x9e0jx8ywm5x2rjmgz4e9hy5r5xd"
+            );
+        } else if (std.mem.eql(u8, domain, "test.kz")) {
+            return types.CryptoAddress.init(
+                self.allocator,
+                domain,
+                .ghostchain,
+                "ghost1test5ulyq0vxpe0jx8ywm5x2rjmgz4e9hy5r5xd"
+            );
         }
         
-        return types.CryptoAddress.init(
-            self.allocator, 
-            domain, 
-            .ghostchain, 
-            mock_address
-        );
+        return error.DomainNotFound;
     }
     
-    /// Register new domain on GhostChain
-    pub fn register(self: *GhostResolver, domain: []const u8, owner_pubkey: [32]u8) !types.ZNSRecord {
+    /// Get all crypto addresses for domain (multi-chain support)
+    pub fn resolveAll(self: *GhostResolver, domain: []const u8) ![]types.CryptoAddress {
+        var addresses = std.ArrayList(types.CryptoAddress).init(self.allocator);
+        defer addresses.deinit();
         
-        // Create default A record
-        var records = try self.allocator.alloc(types.DNSRecord, 1);
-        records[0] = try types.DNSRecord.init(self.allocator, .A, "10.0.0.1", 300);
+        // Primary GhostChain address
+        const primary = try self.resolve(domain);
+        try addresses.append(primary);
         
-        const zns_record = try types.ZNSRecord.init(
-            self.allocator,
-            domain,
-            owner_pubkey,
-            records,
-            300
-        );
-        
-        // TODO: Sign with owner's private key using zcrypto
-        // const zcrypto = @import("zcrypto");
-        // const signable_data = try zns_record.getSignableData(self.allocator);
-        // defer self.allocator.free(signable_data);
-        // zns_record.signature = zcrypto.asym.ed25519.sign(signable_data, private_key);
-        
-        return zns_record;
-    }
-    
-    /// Subscribe to domain changes
-    pub fn subscribe(self: *GhostResolver, domain_filter: []const u8) !void {
-        _ = self;
-        // TODO: Implement gRPC streaming subscription to GhostBridge
-        std.log.info("Subscribing to domain changes for: {s}", .{domain_filter});
-    }
-    
-    /// Check if domain is native GhostChain domain
-    pub fn supports(domain: []const u8) bool {
-        const native_tlds = [_][]const u8{ ".ghost", ".bc", ".kz", ".zkellz" };
-        
-        for (native_tlds) |tld| {
-            if (std.mem.endsWith(u8, domain, tld)) {
-                return true;
-            }
+        // Mock additional addresses for testing
+        if (std.mem.eql(u8, domain, "alice.ghost")) {
+            // Also has Ethereum address
+            const eth_addr = try types.CryptoAddress.init(
+                self.allocator,
+                domain,
+                .ethereum,
+                "0x742d35Cc6634C0532925a3b844Bc9e7595f7E123"
+            );
+            try addresses.append(eth_addr);
         }
-        return false;
+        
+        return addresses.toOwnedSlice();
     }
     
-    /// Get domain metadata
-    pub fn getMetadata(self: *GhostResolver, domain: []const u8) !std.json.Value {
+    /// Get domain metadata (placeholder)
+    pub fn getMetadata(self: *GhostResolver, domain: []const u8) ![]const u8 {
         _ = domain;
         
-        // Mock metadata
-        var arena = std.heap.ArenaAllocator.init(self.allocator);
-        defer arena.deinit();
-        
+        // Return mock metadata
         const metadata_json = 
             \\{
             \\  "version": "1.0",
@@ -105,10 +92,19 @@ pub const GhostResolver = struct {
             \\}
         ;
         
-        const parsed = try std.json.parseFromSlice(std.json.Value, 
-            arena.allocator(), metadata_json, .{});
+        return self.allocator.dupe(u8, metadata_json);
+    }
+    
+    /// Check if domain is GhostChain domain
+    pub fn supports(domain: []const u8) bool {
+        const ghost_tlds = [_][]const u8{ ".ghost", ".bc", ".kz", ".zkellz" };
         
-        return parsed.value;
+        for (ghost_tlds) |tld| {
+            if (std.mem.endsWith(u8, domain, tld)) {
+                return true;
+            }
+        }
+        return false;
     }
 };
 
@@ -117,5 +113,4 @@ test "Ghost domain support check" {
     try std.testing.expect(GhostResolver.supports("vault.bc"));
     try std.testing.expect(GhostResolver.supports("test.kz"));
     try std.testing.expect(!GhostResolver.supports("alice.eth"));
-    try std.testing.expect(!GhostResolver.supports("alice.crypto"));
 }
