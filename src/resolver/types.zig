@@ -2,7 +2,7 @@ const std = @import("std");
 
 /// Supported blockchain/domain types
 pub const DomainType = enum {
-    ghost,       // .ghost, .bc, .kz, .zkellz (via GhostBridge)
+    ghost,       // All Ghostchain TLDs: .ghost, .gcc, .sig, .gpk, .key, .pin, .warp, .arc, .gcp, .bc, .zns, .ops, .sid, .dvm, .tmp, .dbg, .lib, .txo, .kz, .zkellz (via GhostBridge)
     ens,         // .eth (via Ethereum RPC)
     unstoppable, // .crypto, .nft, .x, .wallet, .bitcoin, etc.
     handshake,   // Handshake blockchain domains
@@ -76,9 +76,33 @@ pub const CryptoAddress = struct {
 
 /// Domain registry mapping TLDs to domain types
 pub const DOMAIN_REGISTRY = std.static_string_map.StaticStringMap(DomainType).initComptime(.{
-    // GhostChain native domains
+    // GhostChain core identity domains
     .{ ".ghost", .ghost },
+    .{ ".gcc", .ghost },
+    .{ ".sig", .ghost },
+    .{ ".gpk", .ghost },
+    .{ ".key", .ghost },
+    .{ ".pin", .ghost },
+    
+    // GhostChain arc/warp/gcp ecosystem domains
+    .{ ".warp", .ghost },
+    .{ ".arc", .ghost },
+    .{ ".gcp", .ghost },
+    
+    // GhostChain decentralized & blockchain infrastructure
     .{ ".bc", .ghost },
+    .{ ".zns", .ghost },
+    .{ ".ops", .ghost },
+    
+    // GhostChain reserved/future domains
+    .{ ".sid", .ghost },
+    .{ ".dvm", .ghost },
+    .{ ".tmp", .ghost },
+    .{ ".dbg", .ghost },
+    .{ ".lib", .ghost },
+    .{ ".txo", .ghost },
+    
+    // Legacy GhostChain domains
     .{ ".kz", .ghost },
     .{ ".zkellz", .ghost },
     

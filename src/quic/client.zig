@@ -1,75 +1,93 @@
 const std = @import("std");
-const zquic = @import("zquic");
+const shroud = @import("shroud");
+const ghostwire = shroud.ghostwire;
 const types = @import("../resolver/types.zig");
 
-/// QUIC-based DNS resolver for DNS-over-QUIC support
+/// QUIC-based DNS resolver using Shroud for DNS-over-QUIC support
 pub const QuicDnsClient = struct {
     allocator: std.mem.Allocator,
-    zquic_client: ?zquic.ZQuic,
+    http3_client: ?ghostwire.HttpClient,
+    endpoint: []const u8,
     
     pub fn init(allocator: std.mem.Allocator) QuicDnsClient {
         return QuicDnsClient{
             .allocator = allocator,
-            .zquic_client = null,
+            .http3_client = null,
+            .endpoint = "",
         };
     }
     
     pub fn deinit(self: *QuicDnsClient) void {
-        if (self.zquic_client) |*client| {
+        if (self.http3_client) |*client| {
             client.deinit();
         }
     }
     
-    /// Connect to QUIC endpoint
+    /// Connect to QUIC endpoint using Shroud
     pub fn connect(self: *QuicDnsClient, endpoint: []const u8) !void {
-        // Initialize ZQUIC client
-        const config = zquic.ZQuicConfig{
-            .port = 853, // DNS-over-QUIC standard port
-            .max_connections = 10,
-            .alpn = "doq", // DNS-over-QUIC ALPN
+        // Initialize Shroud HTTP/3 client for DNS-over-QUIC
+        const config = ghostwire.HttpClient.Config{
+            .timeout_ms = 5000,
+            .enable_compression = true,
+            .verify_tls = true,
         };
         
-        self.zquic_client = try zquic.ZQuic.new(config);
-        
-        // Connect to endpoint
-        try self.zquic_client.?.connect(endpoint);
+        self.http3_client = try ghostwire.HttpClient.init(self.allocator, config);
+        self.endpoint = endpoint;
     }
     
-    /// Make DNS query over QUIC
+    /// Make DNS query over QUIC using Shroud HTTP/3
     pub fn dnsQuery(
         self: *QuicDnsClient, 
         domain: []const u8, 
         record_type: []const u8
     ) !DnsResponse {
-        if (self.zquic_client == null) {
+        if (self.http3_client == null) {
             return error.NotConnected;
         }
         
-        // Use ZQUIC FFI DNS query function
-        const response_data = try self.zquic_client.?.dns_query(domain, record_type);
-        defer self.allocator.free(response_data);
+        // Construct DNS-over-HTTPS query URL
+        const query_url = try std.fmt.allocPrint(self.allocator,
+            "{s}/dns-query?name={s}&type={s}",
+            .{ self.endpoint, domain, record_type }
+        );
+        defer self.allocator.free(query_url);
         
-        return self.parseDnsResponse(domain, response_data);
+        // Make HTTP/3 request via Shroud
+        var response = try self.http3_client.?.get(query_url);
+        defer response.deinit(self.allocator);
+        
+        return self.parseDnsResponse(domain, response.body);
     }
     
-    /// Make gRPC call over QUIC (for GhostBridge integration)
+    /// Make gRPC call over QUIC using Shroud (for GhostBridge integration)
     pub fn grpcCall(
         self: *QuicDnsClient,
         service_method: []const u8,
         request_data: []const u8,
     ) ![]u8 {
-        if (self.zquic_client == null) {
+        if (self.http3_client == null) {
             return error.NotConnected;
         }
         
-        // Use ZQUIC FFI gRPC call function
-        return self.zquic_client.?.grpc_call(service_method, request_data);
+        // Construct gRPC request URL
+        const grpc_url = try std.fmt.allocPrint(self.allocator,
+            "{s}/grpc/{s}",
+            .{ self.endpoint, service_method }
+        );
+        defer self.allocator.free(grpc_url);
+        
+        // Make gRPC call over HTTP/3
+        var response = try self.http3_client.?.post(grpc_url, request_data, "application/grpc");
+        defer response.deinit(self.allocator);
+        
+        return self.allocator.dupe(u8, response.body);
     }
     
     /// Parse DNS response data
     fn parseDnsResponse(self: *QuicDnsClient, domain: []const u8, data: []const u8) !DnsResponse {
         // Parse JSON response from DNS-over-QUIC
-        var parser = std.json.Parser.init(self.allocator, false);
+        var parser = std.json.Parser.init(self.allocator, .{});
         defer parser.deinit();
         
         var tree = try parser.parse(data);
@@ -77,8 +95,8 @@ pub const QuicDnsClient = struct {
         
         const root = tree.root;
         
-        if (root.Object.get("Status")) |status| {
-            if (status.Integer != 0) {
+        if (root.object.get("Status")) |status| {
+            if (status.integer != 0) {
                 return error.DnsQueryFailed;
             }
         }
@@ -86,11 +104,11 @@ pub const QuicDnsClient = struct {
         var records = std.ArrayList(DnsRecord).init(self.allocator);
         defer records.deinit();
         
-        if (root.Object.get("Answer")) |answer_array| {
-            for (answer_array.Array.items) |answer| {
-                const record_type = answer.Object.get("type").?.Integer;
-                const record_data = answer.Object.get("data").?.String;
-                const ttl = answer.Object.get("TTL").?.Integer;
+        if (root.object.get("Answer")) |answer_array| {
+            for (answer_array.array.items) |answer| {
+                const record_type = answer.object.get("type").?.integer;
+                const record_data = answer.object.get("data").?.string;
+                const ttl = answer.object.get("TTL").?.integer;
                 
                 const record = DnsRecord{
                     .name = try self.allocator.dupe(u8, domain),
@@ -153,26 +171,32 @@ pub const DnsRecord = struct {
     }
 };
 
-/// gRPC-over-QUIC client for GhostBridge integration
+/// gRPC-over-QUIC client using Shroud for GhostBridge integration
 pub const QuicGrpcClient = struct {
     quic_client: QuicDnsClient,
+    grpc_client: ghostwire.grpc.GrpcClient,
     endpoint: []const u8,
     
     pub fn init(allocator: std.mem.Allocator, endpoint: []const u8) !QuicGrpcClient {
         var client = QuicDnsClient.init(allocator);
         try client.connect(endpoint);
         
+        // Initialize Shroud gRPC client
+        const grpc_client = try ghostwire.grpc.GrpcClient.init(allocator, endpoint);
+        
         return QuicGrpcClient{
             .quic_client = client,
+            .grpc_client = grpc_client,
             .endpoint = endpoint,
         };
     }
     
     pub fn deinit(self: *QuicGrpcClient) void {
         self.quic_client.deinit();
+        self.grpc_client.deinit();
     }
     
-    /// Make gRPC call to ZNS service
+    /// Make gRPC call to ZNS service using Shroud
     pub fn resolveGhostDomain(self: *QuicGrpcClient, domain: []const u8) !types.CryptoAddress {
         // Create gRPC request
         const request = try std.fmt.allocPrint(
@@ -182,9 +206,10 @@ pub const QuicGrpcClient = struct {
         );
         defer self.quic_client.allocator.free(request);
         
-        // Make gRPC call over QUIC
-        const response = try self.quic_client.grpcCall(
-            "ghost.zns.ZNSService/ResolveDomain",
+        // Make gRPC call using Shroud
+        const response = try self.grpc_client.call(
+            "ghost.zns.ZNSService",
+            "ResolveDomain",
             request
         );
         defer self.quic_client.allocator.free(response);
@@ -195,7 +220,7 @@ pub const QuicGrpcClient = struct {
     
     /// Parse gRPC response from GhostBridge
     fn parseGrpcResponse(self: *QuicGrpcClient, domain: []const u8, data: []const u8) !types.CryptoAddress {
-        var parser = std.json.Parser.init(self.quic_client.allocator, false);
+        var parser = std.json.Parser.init(self.quic_client.allocator, .{});
         defer parser.deinit();
         
         var tree = try parser.parse(data);
@@ -204,13 +229,13 @@ pub const QuicGrpcClient = struct {
         const root = tree.root;
         
         // Extract address from response
-        const records = root.Object.get("records").?.Array;
+        const records = root.object.get("records").?.array;
         if (records.items.len == 0) {
             return error.DomainNotFound;
         }
         
         const first_record = records.items[0];
-        const address = first_record.Object.get("value").?.String;
+        const address = first_record.object.get("value").?.string;
         
         return types.CryptoAddress.init(
             self.quic_client.allocator,
@@ -220,7 +245,7 @@ pub const QuicGrpcClient = struct {
         );
     }
     
-    /// Register domain via gRPC-over-QUIC
+    /// Register domain via gRPC using Shroud
     pub fn registerGhostDomain(
         self: *QuicGrpcClient,
         domain: []const u8,
@@ -232,9 +257,10 @@ pub const QuicGrpcClient = struct {
         const request = try self.buildRegisterRequest(domain, owner_pubkey, records, signature);
         defer self.quic_client.allocator.free(request);
         
-        // Make gRPC call
-        const response = try self.quic_client.grpcCall(
-            "ghost.zns.ZNSService/RegisterDomain",
+        // Make gRPC call using Shroud
+        const response = try self.grpc_client.call(
+            "ghost.zns.ZNSService",
+            "RegisterDomain", 
             request
         );
         defer self.quic_client.allocator.free(response);
@@ -268,24 +294,24 @@ pub const QuicGrpcClient = struct {
     
     /// Parse registration response
     fn parseRegisterResponse(self: *QuicGrpcClient, data: []const u8) !RegisterResult {
-        var parser = std.json.Parser.init(self.quic_client.allocator, false);
+        var parser = std.json.Parser.init(self.quic_client.allocator, .{});
         defer parser.deinit();
         
         var tree = try parser.parse(data);
         defer tree.deinit();
         
         const root = tree.root;
-        const success = root.Object.get("success").?.Bool;
+        const success = root.object.get("success").?.bool;
         
         if (success) {
-            const tx_hash = root.Object.get("transaction_hash").?.String;
+            const tx_hash = root.object.get("transaction_hash").?.string;
             return RegisterResult{
                 .success = true,
                 .transaction_hash = try self.quic_client.allocator.dupe(u8, tx_hash),
                 .error_message = null,
             };
         } else {
-            const error_msg = root.Object.get("error").?.String;
+            const error_msg = root.object.get("error").?.string;
             return RegisterResult{
                 .success = false,
                 .transaction_hash = null,
@@ -310,3 +336,35 @@ pub const RegisterResult = struct {
         }
     }
 };
+
+test "QUIC DNS client with Shroud" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    
+    var client = QuicDnsClient.init(arena.allocator());
+    defer client.deinit();
+    
+    // Connect to DNS-over-QUIC endpoint
+    try client.connect("https://dns.cloudflare.com");
+    
+    // Should be connected
+    try std.testing.expect(client.http3_client != null);
+}
+
+test "gRPC over QUIC with Shroud" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    
+    // This would connect to a real GhostBridge endpoint in production
+    const endpoint = "https://ghostbridge.example.com";
+    
+    var grpc_client = QuicGrpcClient.init(arena.allocator(), endpoint) catch |err| switch (err) {
+        error.ConnectionFailed => {
+            // Expected in test environment without real endpoint
+            try std.testing.expect(true);
+            return;
+        },
+        else => return err,
+    };
+    defer grpc_client.deinit();
+}

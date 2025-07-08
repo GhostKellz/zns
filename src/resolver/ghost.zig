@@ -21,7 +21,7 @@ pub const GhostResolver = struct {
         // For now, use mock data until gRPC integration
         // TODO: Implement gRPC client for GhostBridge
         
-        // Mock resolution for testing
+        // Mock resolution for testing - support all Ghostchain TLDs
         if (std.mem.eql(u8, domain, "alice.ghost")) {
             return types.CryptoAddress.init(
                 self.allocator,
@@ -42,6 +42,48 @@ pub const GhostResolver = struct {
                 domain,
                 .ghostchain,
                 "ghost1test5ulyq0vxpe0jx8ywm5x2rjmgz4e9hy5r5xd"
+            );
+        } else if (std.mem.eql(u8, domain, "batcher.warp")) {
+            return types.CryptoAddress.init(
+                self.allocator,
+                domain,
+                .ghostchain,
+                "ghost1warp123ulyq0vxpe0jx8ywm5x2rjmgz4e9hy5r5xd"
+            );
+        } else if (std.mem.eql(u8, domain, "registry.gcp")) {
+            return types.CryptoAddress.init(
+                self.allocator,
+                domain,
+                .ghostchain,
+                "ghost1gcp456ulyq0vxpe0jx8ywm5x2rjmgz4e9hy5r5xd"
+            );
+        } else if (std.mem.eql(u8, domain, "governance.arc")) {
+            return types.CryptoAddress.init(
+                self.allocator,
+                domain,
+                .ghostchain,
+                "ghost1arc789ulyq0vxpe0jx8ywm5x2rjmgz4e9hy5r5xd"
+            );
+        } else if (std.mem.eql(u8, domain, "mykey.gpk")) {
+            return types.CryptoAddress.init(
+                self.allocator,
+                domain,
+                .ghostchain,
+                "ghost1gpkabc123ulyq0vxpe0jx8ywm5x2rjmgz4e9hy5r5xd"
+            );
+        } else if (std.mem.eql(u8, domain, "contract.gcc")) {
+            return types.CryptoAddress.init(
+                self.allocator,
+                domain,
+                .ghostchain,
+                "ghost1gccdef456ulyq0vxpe0jx8ywm5x2rjmgz4e9hy5r5xd"
+            );
+        } else if (std.mem.eql(u8, domain, "signer.sig")) {
+            return types.CryptoAddress.init(
+                self.allocator,
+                domain,
+                .ghostchain,
+                "ghost1sigghi789ulyq0vxpe0jx8ywm5x2rjmgz4e9hy5r5xd"
             );
         }
         
@@ -97,7 +139,18 @@ pub const GhostResolver = struct {
     
     /// Check if domain is GhostChain domain
     pub fn supports(domain: []const u8) bool {
-        const ghost_tlds = [_][]const u8{ ".ghost", ".bc", ".kz", ".zkellz" };
+        const ghost_tlds = [_][]const u8{ 
+            // Core identity domains
+            ".ghost", ".gcc", ".sig", ".gpk", ".key", ".pin",
+            // Arc/warp/gcp ecosystem domains  
+            ".warp", ".arc", ".gcp",
+            // Decentralized & blockchain infrastructure
+            ".bc", ".zns", ".ops",
+            // Reserved/future domains
+            ".sid", ".dvm", ".tmp", ".dbg", ".lib", ".txo",
+            // Legacy domains
+            ".kz", ".zkellz"
+        };
         
         for (ghost_tlds) |tld| {
             if (std.mem.endsWith(u8, domain, tld)) {
@@ -109,8 +162,36 @@ pub const GhostResolver = struct {
 };
 
 test "Ghost domain support check" {
+    // Core identity domains
     try std.testing.expect(GhostResolver.supports("alice.ghost"));
+    try std.testing.expect(GhostResolver.supports("contract.gcc"));
+    try std.testing.expect(GhostResolver.supports("signer.sig"));
+    try std.testing.expect(GhostResolver.supports("mykey.gpk"));
+    try std.testing.expect(GhostResolver.supports("device.pin"));
+    
+    // Arc/warp/gcp ecosystem domains
+    try std.testing.expect(GhostResolver.supports("batcher.warp"));
+    try std.testing.expect(GhostResolver.supports("governance.arc"));
+    try std.testing.expect(GhostResolver.supports("registry.gcp"));
+    
+    // Infrastructure domains
     try std.testing.expect(GhostResolver.supports("vault.bc"));
+    try std.testing.expect(GhostResolver.supports("root.zns"));
+    try std.testing.expect(GhostResolver.supports("gateway.ops"));
+    
+    // Reserved domains
+    try std.testing.expect(GhostResolver.supports("temp.sid"));
+    try std.testing.expect(GhostResolver.supports("vm.dvm"));
+    try std.testing.expect(GhostResolver.supports("test.tmp"));
+    try std.testing.expect(GhostResolver.supports("debug.dbg"));
+    try std.testing.expect(GhostResolver.supports("math.lib"));
+    try std.testing.expect(GhostResolver.supports("tx123.txo"));
+    
+    // Legacy domains
     try std.testing.expect(GhostResolver.supports("test.kz"));
+    try std.testing.expect(GhostResolver.supports("zkellz.zkellz"));
+    
+    // Non-Ghost domains should return false
     try std.testing.expect(!GhostResolver.supports("alice.eth"));
+    try std.testing.expect(!GhostResolver.supports("vault.crypto"));
 }
