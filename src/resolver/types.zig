@@ -249,9 +249,9 @@ pub const ZNSRecord = struct {
         const signable_data = try self.getSignableData(allocator);
         defer allocator.free(signable_data);
         
-        // TODO: Use zcrypto for actual verification
-        // const zcrypto = @import("zcrypto");
-        // return zcrypto.asym.ed25519.verify(signable_data, self.owner_pubkey, self.signature);
+        // TODO: Use Shroud for actual verification
+        // const shroud = @import("shroud");
+        // return shroud.ghostcipher.zcrypto.asym.ed25519.verify(signable_data, self.owner_pubkey, self.signature);
         
         // Placeholder implementation
         return true;

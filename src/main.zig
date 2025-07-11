@@ -30,7 +30,7 @@ pub fn main() !void {
     }
     
     // Initialize CLI
-    var cli = zns.cli.commands.CLI.init(allocator, args);
+    var cli = try zns.cli.commands.CLI.init(allocator, args);
     defer cli.deinit();
     
     // Execute command

@@ -22,12 +22,12 @@ pub const UniversalResolver = struct {
         ghostbridge_endpoint: []const u8,
         ethereum_rpc_url: []const u8,
         unstoppable_api_key: ?[]const u8,
-    ) UniversalResolver {
+    ) !UniversalResolver {
         return UniversalResolver{
             .allocator = allocator,
-            .ghost_resolver = ghost.GhostResolver.init(allocator, ghostbridge_endpoint),
-            .ens_resolver = ens.ENSResolver.init(allocator, ethereum_rpc_url),
-            .unstoppable_resolver = unstoppable.UnstoppableResolver.init(allocator, unstoppable_api_key),
+            .ghost_resolver = try ghost.GhostResolver.init(allocator, ghostbridge_endpoint),
+            .ens_resolver = try ens.ENSResolver.init(allocator, ethereum_rpc_url),
+            .unstoppable_resolver = try unstoppable.UnstoppableResolver.init(allocator, unstoppable_api_key),
             .cache = null,
         };
     }
@@ -40,7 +40,7 @@ pub const UniversalResolver = struct {
         unstoppable_api_key: ?[]const u8,
         cache_db_path: []const u8,
     ) !UniversalResolver {
-        var resolver = init(allocator, ghostbridge_endpoint, ethereum_rpc_url, unstoppable_api_key);
+        var resolver = try init(allocator, ghostbridge_endpoint, ethereum_rpc_url, unstoppable_api_key);
         resolver.cache = try zqlite_cache.ZQLiteCache.init(allocator, cache_db_path);
         return resolver;
     }

@@ -53,10 +53,10 @@ pub const UnstoppableEnhancedResolver = struct {
         }
     };
     
-    pub fn init(allocator: std.mem.Allocator, api_key: ?[]const u8) UnstoppableEnhancedResolver {
+    pub fn init(allocator: std.mem.Allocator, api_key: ?[]const u8) !UnstoppableEnhancedResolver {
         return UnstoppableEnhancedResolver{
             .allocator = allocator,
-            .http_client = client.HttpClient.init(allocator),
+            .http_client = try client.HttpClient.init(allocator),
             .api_key = api_key,
         };
     }

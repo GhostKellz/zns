@@ -8,10 +8,10 @@ pub const GhostResolver = struct {
     http_client: client.HttpClient,
     ghostbridge_endpoint: []const u8,
     
-    pub fn init(allocator: std.mem.Allocator, ghostbridge_endpoint: []const u8) GhostResolver {
+    pub fn init(allocator: std.mem.Allocator, ghostbridge_endpoint: []const u8) !GhostResolver {
         return GhostResolver{
             .allocator = allocator,
-            .http_client = client.HttpClient.init(allocator),
+            .http_client = try client.HttpClient.init(allocator),
             .ghostbridge_endpoint = ghostbridge_endpoint,
         };
     }

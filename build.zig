@@ -23,11 +23,7 @@ pub fn build(b: *std.Build) void {
     // in this directory.
 
     // Get dependencies (lazy loading)
-    const zcrypto = b.lazyDependency("zcrypto", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    const zquic = b.lazyDependency("zquic", .{
+    const shroud = b.lazyDependency("shroud", .{
         .target = target,
         .optimize = optimize,
     });
@@ -50,11 +46,8 @@ pub fn build(b: *std.Build) void {
     // Build imports list dynamically based on available dependencies
     var imports = std.ArrayList(std.Build.Module.Import).init(b.allocator);
     
-    if (zcrypto) |zcrypto_dep| {
-        imports.append(.{ .name = "zcrypto", .module = zcrypto_dep.module("zcrypto") }) catch @panic("OOM");
-    }
-    if (zquic) |zquic_dep| {
-        imports.append(.{ .name = "zquic", .module = zquic_dep.module("zquic") }) catch @panic("OOM");
+    if (shroud) |shroud_dep| {
+        imports.append(.{ .name = "shroud", .module = shroud_dep.module("shroud") }) catch @panic("OOM");
     }
     if (TokioZ) |TokioZ_dep| {
         imports.append(.{ .name = "TokioZ", .module = TokioZ_dep.module("TokioZ") }) catch @panic("OOM");

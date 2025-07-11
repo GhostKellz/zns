@@ -17,9 +17,7 @@ pub const cli = struct {
     pub const commands = @import("cli/commands.zig");
 };
 
-pub const zwallet = struct {
-    pub const integration = @import("zwallet/integration.zig");
-};
+// Note: zwallet functionality now provided by Shroud's keystone module
 
 // Re-export commonly used types
 pub const CryptoAddress = resolver.types.CryptoAddress;
@@ -55,5 +53,5 @@ test {
     _ = @import("resolver/ghost.zig");
     _ = @import("resolver/universal.zig");
     _ = @import("cli/commands.zig");
-    _ = @import("zwallet/integration.zig");
+    // Note: zwallet tests now handled by Shroud's keystone module
 }

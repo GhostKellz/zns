@@ -38,7 +38,7 @@ pub const CLI = struct {
     allocator: std.mem.Allocator,
     resolver: universal.UniversalResolver,
 
-    pub fn init(allocator: std.mem.Allocator, args: Args) CLI {
+    pub fn init(allocator: std.mem.Allocator, args: Args) !CLI {
         const resolver = if (args.cache_db_path) |cache_path|
             universal.createCachedUniversalResolver(
                 allocator,
@@ -46,14 +46,14 @@ pub const CLI = struct {
                 args.ethereum_rpc,
                 args.unstoppable_api_key,
                 cache_path,
-            ) catch universal.UniversalResolver.init(
+            ) catch try universal.UniversalResolver.init(
                 allocator,
                 args.ghostbridge_endpoint,
                 args.ethereum_rpc,
                 args.unstoppable_api_key,
             )
         else
-            universal.UniversalResolver.init(
+            try universal.UniversalResolver.init(
                 allocator,
                 args.ghostbridge_endpoint,
                 args.ethereum_rpc,

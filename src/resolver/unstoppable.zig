@@ -10,10 +10,10 @@ pub const UnstoppableResolver = struct {
     
     const UNSTOPPABLE_API = "https://resolve.unstoppabledomains.com";
     
-    pub fn init(allocator: std.mem.Allocator, api_key: ?[]const u8) UnstoppableResolver {
+    pub fn init(allocator: std.mem.Allocator, api_key: ?[]const u8) !UnstoppableResolver {
         return UnstoppableResolver{
             .allocator = allocator,
-            .http_client = client.HttpClient.init(allocator),
+            .http_client = try client.HttpClient.init(allocator),
             .api_key = api_key,
         };
     }
