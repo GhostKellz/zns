@@ -1,48 +1,34 @@
 const std = @import("std");
-const shroud = @import("shroud");
-const ghostwire = shroud.ghostwire;
 const types = @import("../resolver/types.zig");
 
-/// QUIC-based DNS resolver using Shroud for DNS-over-QUIC support
+/// DNS-over-HTTPS client using standard HTTP (QUIC support removed)
 pub const QuicDnsClient = struct {
     allocator: std.mem.Allocator,
-    http3_client: ?ghostwire.HttpClient,
     endpoint: []const u8,
     
     pub fn init(allocator: std.mem.Allocator) QuicDnsClient {
         return QuicDnsClient{
             .allocator = allocator,
-            .http3_client = null,
             .endpoint = "",
         };
     }
     
     pub fn deinit(self: *QuicDnsClient) void {
-        if (self.http3_client) |*client| {
-            client.deinit();
-        }
+        _ = self;
     }
     
-    /// Connect to QUIC endpoint using Shroud
+    /// Connect to DNS-over-HTTPS endpoint
     pub fn connect(self: *QuicDnsClient, endpoint: []const u8) !void {
-        // Initialize Shroud HTTP/3 client for DNS-over-QUIC
-        const config = ghostwire.HttpClient.Config{
-            .timeout_ms = 5000,
-            .enable_compression = true,
-            .verify_tls = true,
-        };
-        
-        self.http3_client = try ghostwire.HttpClient.init(self.allocator, config);
         self.endpoint = endpoint;
     }
     
-    /// Make DNS query over QUIC using Shroud HTTP/3
+    /// Make DNS query over HTTPS
     pub fn dnsQuery(
         self: *QuicDnsClient, 
         domain: []const u8, 
         record_type: []const u8
     ) !DnsResponse {
-        if (self.http3_client == null) {
+        if (self.endpoint.len == 0) {
             return error.NotConnected;
         }
         
@@ -53,20 +39,37 @@ pub const QuicDnsClient = struct {
         );
         defer self.allocator.free(query_url);
         
-        // Make HTTP/3 request via Shroud
-        var response = try self.http3_client.?.get(query_url);
-        defer response.deinit(self.allocator);
+        // Parse URL and make standard HTTP request
+        const uri = try std.Uri.parse(query_url);
+        var http_client = std.http.Client{ .allocator = self.allocator };
+        defer http_client.deinit();
         
-        return self.parseDnsResponse(domain, response.body);
+        var header_buf: [8192]u8 = undefined;
+        var req = try http_client.open(.GET, uri, .{
+            .server_header_buffer = &header_buf,
+            .extra_headers = &.{
+                .{ .name = "Accept", .value = "application/dns-json" },
+            },
+        });
+        defer req.deinit();
+        
+        try req.send();
+        try req.finish();
+        try req.wait();
+        
+        const response_body = try req.reader().readAllAlloc(self.allocator, 1024 * 1024);
+        defer self.allocator.free(response_body);
+        
+        return self.parseDnsResponse(domain, response_body);
     }
     
-    /// Make gRPC call over QUIC using Shroud (for GhostBridge integration)
+    /// Make gRPC call over HTTPS (simplified)
     pub fn grpcCall(
         self: *QuicDnsClient,
         service_method: []const u8,
         request_data: []const u8,
     ) ![]u8 {
-        if (self.http3_client == null) {
+        if (self.endpoint.len == 0) {
             return error.NotConnected;
         }
         
@@ -77,11 +80,27 @@ pub const QuicDnsClient = struct {
         );
         defer self.allocator.free(grpc_url);
         
-        // Make gRPC call over HTTP/3
-        var response = try self.http3_client.?.post(grpc_url, request_data, "application/grpc");
-        defer response.deinit(self.allocator);
+        // Make standard HTTP POST request
+        const uri = try std.Uri.parse(grpc_url);
+        var http_client = std.http.Client{ .allocator = self.allocator };
+        defer http_client.deinit();
         
-        return self.allocator.dupe(u8, response.body);
+        var header_buf: [8192]u8 = undefined;
+        var req = try http_client.open(.POST, uri, .{
+            .server_header_buffer = &header_buf,
+            .extra_headers = &.{
+                .{ .name = "Content-Type", .value = "application/grpc" },
+            },
+        });
+        defer req.deinit();
+        
+        try req.send();
+        try req.writeAll(request_data);
+        try req.finish();
+        try req.wait();
+        
+        const response_body = try req.reader().readAllAlloc(self.allocator, 1024 * 1024);
+        return response_body;
     }
     
     /// Parse DNS response data
@@ -171,32 +190,26 @@ pub const DnsRecord = struct {
     }
 };
 
-/// gRPC-over-QUIC client using Shroud for GhostBridge integration
+/// gRPC-over-HTTP client for GhostBridge integration
 pub const QuicGrpcClient = struct {
     quic_client: QuicDnsClient,
-    grpc_client: ghostwire.grpc.GrpcClient,
     endpoint: []const u8,
     
     pub fn init(allocator: std.mem.Allocator, endpoint: []const u8) !QuicGrpcClient {
         var client = QuicDnsClient.init(allocator);
         try client.connect(endpoint);
         
-        // Initialize Shroud gRPC client
-        const grpc_client = try ghostwire.grpc.GrpcClient.init(allocator, endpoint);
-        
         return QuicGrpcClient{
             .quic_client = client,
-            .grpc_client = grpc_client,
             .endpoint = endpoint,
         };
     }
     
     pub fn deinit(self: *QuicGrpcClient) void {
         self.quic_client.deinit();
-        self.grpc_client.deinit();
     }
     
-    /// Make gRPC call to ZNS service using Shroud
+    /// Make gRPC call to ZNS service
     pub fn resolveGhostDomain(self: *QuicGrpcClient, domain: []const u8) !types.CryptoAddress {
         // Create gRPC request
         const request = try std.fmt.allocPrint(
@@ -206,10 +219,9 @@ pub const QuicGrpcClient = struct {
         );
         defer self.quic_client.allocator.free(request);
         
-        // Make gRPC call using Shroud
-        const response = try self.grpc_client.call(
-            "ghost.zns.ZNSService",
-            "ResolveDomain",
+        // Make gRPC call via standard HTTP
+        const response = try self.quic_client.grpcCall(
+            "ghost.zns.ZNSService/ResolveDomain",
             request
         );
         defer self.quic_client.allocator.free(response);
@@ -245,7 +257,7 @@ pub const QuicGrpcClient = struct {
         );
     }
     
-    /// Register domain via gRPC using Shroud
+    /// Register domain via gRPC
     pub fn registerGhostDomain(
         self: *QuicGrpcClient,
         domain: []const u8,
@@ -257,10 +269,9 @@ pub const QuicGrpcClient = struct {
         const request = try self.buildRegisterRequest(domain, owner_pubkey, records, signature);
         defer self.quic_client.allocator.free(request);
         
-        // Make gRPC call using Shroud
-        const response = try self.grpc_client.call(
-            "ghost.zns.ZNSService",
-            "RegisterDomain", 
+        // Make gRPC call via standard HTTP
+        const response = try self.quic_client.grpcCall(
+            "ghost.zns.ZNSService/RegisterDomain",
             request
         );
         defer self.quic_client.allocator.free(response);
@@ -337,34 +348,30 @@ pub const RegisterResult = struct {
     }
 };
 
-test "QUIC DNS client with Shroud" {
+test "DNS-over-HTTPS client" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     
     var client = QuicDnsClient.init(arena.allocator());
     defer client.deinit();
     
-    // Connect to DNS-over-QUIC endpoint
+    // Connect to DNS-over-HTTPS endpoint
     try client.connect("https://dns.cloudflare.com");
     
     // Should be connected
-    try std.testing.expect(client.http3_client != null);
+    try std.testing.expect(client.endpoint.len > 0);
 }
 
-test "gRPC over QUIC with Shroud" {
+test "gRPC over HTTP" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     
     // This would connect to a real GhostBridge endpoint in production
     const endpoint = "https://ghostbridge.example.com";
     
-    var grpc_client = QuicGrpcClient.init(arena.allocator(), endpoint) catch |err| switch (err) {
-        error.ConnectionFailed => {
-            // Expected in test environment without real endpoint
-            try std.testing.expect(true);
-            return;
-        },
-        else => return err,
-    };
+    var grpc_client = try QuicGrpcClient.init(arena.allocator(), endpoint);
     defer grpc_client.deinit();
+    
+    // Should be connected
+    try std.testing.expect(grpc_client.endpoint.len > 0);
 }

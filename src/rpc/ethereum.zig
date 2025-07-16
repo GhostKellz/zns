@@ -1,70 +1,23 @@
 const std = @import("std");
-const shroud = @import("shroud");
-const ghostwire = shroud.ghostwire;
-const ghostcipher = shroud.ghostcipher;
-const sigil = shroud.sigil;
 
-/// Ethereum JSON-RPC compatible server for GhostChain integration using Shroud
+/// Ethereum JSON-RPC compatible server for GhostChain integration
 pub const EthereumRPC = struct {
     allocator: std.mem.Allocator,
-    http_client: ghostwire.HttpClient,
     ghostbridge_endpoint: []const u8,
     chain_id: u64,
-    server: ?ghostwire.UnifiedServer,
     
     pub fn init(allocator: std.mem.Allocator, ghostbridge_endpoint: []const u8, chain_id: u64) !EthereumRPC {
         return EthereumRPC{
             .allocator = allocator,
-            .http_client = try ghostwire.HttpClient.init(allocator, .{}),
             .ghostbridge_endpoint = ghostbridge_endpoint,
             .chain_id = chain_id,
-            .server = null,
         };
     }
     
     pub fn deinit(self: *EthereumRPC) void {
-        self.http_client.deinit();
-        if (self.server) |*server| {
-            server.deinit();
-        }
+        _ = self;
     }
     
-    /// Start Ethereum RPC server using Shroud's unified server
-    pub fn startServer(self: *EthereumRPC, port: u16) !void {
-        const config = ghostwire.UnifiedServerConfig{
-            .http1_port = port,
-            .http2_port = port + 1,
-            .http3_port = port + 2,
-            .grpc_port = port + 3,
-            .enable_tls = false, // Disable for local development
-            .max_connections = 1000,
-        };
-        
-        self.server = try ghostwire.UnifiedServer.init(self.allocator, config);
-        self.server.?.addHandler("/", ethereumRPCHandler);
-        try self.server.?.start();
-    }
-    
-    /// HTTP handler for Ethereum RPC requests
-    fn ethereumRPCHandler(request: *ghostwire.UnifiedRequest, response: *ghostwire.UnifiedResponse) !void {
-        if (std.mem.eql(u8, request.method, "POST")) {
-            // Parse JSON-RPC request
-            const rpc_response = try handleEthereumRPC(request.body);
-            response.setStatus(200);
-            response.setHeader("Content-Type", "application/json");
-            response.setBody(rpc_response);
-        } else {
-            response.setStatus(405);
-            response.setBody("Method not allowed");
-        }
-    }
-    
-    /// Handle Ethereum RPC request
-    fn handleEthereumRPC(request_body: []const u8) ![]u8 {
-        // Implementation would parse request and route to appropriate method
-        _ = request_body;
-        return "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0x1337\"}";
-    }
     
     /// Handle incoming JSON-RPC requests
     pub fn handleRequest(self: *EthereumRPC, request_body: []const u8) ![]u8 {
@@ -213,7 +166,7 @@ pub const EthereumRPC = struct {
     /// web3_clientVersion - Return client version
     fn web3ClientVersion(self: *EthereumRPC, id: u32) ![]u8 {
         return try std.fmt.allocPrint(self.allocator,
-            \\{{"jsonrpc":"2.0","id":{d},"result":"GhostChain-Shroud/v1.0.0/zig"}}
+            \\{{"jsonrpc":"2.0","id":{d},"result":"GhostChain-ZNS/v0.4.0/zig"}}
         , .{id});
     }
     
@@ -224,21 +177,38 @@ pub const EthereumRPC = struct {
         , .{ id, message });
     }
     
-    /// Forward request to GhostBridge using Shroud HTTP client
+    /// Forward request to GhostBridge using standard HTTP
     fn forwardToGhostBridge(self: *EthereumRPC, method: []const u8, params: []const u8) ![]u8 {
         const request_json = try std.fmt.allocPrint(self.allocator,
             \\{{"method":"{s}","params":{s}}}
         , .{ method, params });
         defer self.allocator.free(request_json);
         
-        var response = try self.http_client.post(self.ghostbridge_endpoint, request_json, "application/json");
-        defer response.deinit(self.allocator);
+        // Use standard HTTP client for GhostBridge communication
+        const uri = try std.Uri.parse(self.ghostbridge_endpoint);
+        var http_client = std.http.Client{ .allocator = self.allocator };
+        defer http_client.deinit();
         
-        return self.allocator.dupe(u8, response.body);
+        var header_buf: [8192]u8 = undefined;
+        var req = try http_client.open(.POST, uri, .{
+            .server_header_buffer = &header_buf,
+            .extra_headers = &.{
+                .{ .name = "Content-Type", .value = "application/json" },
+            },
+        });
+        defer req.deinit();
+        
+        try req.send();
+        try req.writeAll(request_json);
+        try req.finish();
+        try req.wait();
+        
+        const response_body = try req.reader().readAllAlloc(self.allocator, 1024 * 1024);
+        return response_body;
     }
 };
 
-/// EVM-compatible execution layer using Shroud
+/// EVM-compatible execution layer
 pub const EVMExecution = struct {
     allocator: std.mem.Allocator,
     ghostbridge_endpoint: []const u8,
@@ -305,7 +275,7 @@ pub const EVMLog = struct {
     }
 };
 
-/// Wallet compatibility layer using Shroud cryptography
+/// Wallet compatibility layer (simplified without cryptography dependencies)
 pub const WalletCompat = struct {
     allocator: std.mem.Allocator,
     
@@ -315,45 +285,19 @@ pub const WalletCompat = struct {
         };
     }
     
-    /// Generate Ethereum-compatible address from GhostChain RealID key
-    pub fn generateEthAddress(self: *WalletCompat, realid_pubkey: sigil.RealIDPublicKey) ![]u8 {
-        // Convert RealID public key to Ethereum address format
-        // Use keccak256 hash of public key, take last 20 bytes
-        var hash_output: [32]u8 = undefined;
-        ghostcipher.zcrypto.hash.digest(.sha3_256, &realid_pubkey.bytes, &hash_output);
-        
-        // Take last 20 bytes and format as hex with 0x prefix
-        var eth_addr = try self.allocator.alloc(u8, 42); // "0x" + 40 hex chars
-        eth_addr[0] = '0';
-        eth_addr[1] = 'x';
-        
-        const hex_chars = "0123456789abcdef";
-        for (hash_output[12..], 0..) |byte, i| {
-            eth_addr[2 + i * 2] = hex_chars[byte >> 4];
-            eth_addr[2 + i * 2 + 1] = hex_chars[byte & 0xF];
-        }
-        
-        return eth_addr;
+    /// Generate mock Ethereum-compatible address (placeholder)
+    pub fn generateEthAddress(self: *WalletCompat, seed: []const u8) ![]u8 {
+        _ = seed;
+        // Return mock Ethereum address for now
+        return self.allocator.dupe(u8, "0x742d35Cc6634C0532925a3b844Bc9e7595f7E123");
     }
     
-    /// Sign transaction using Shroud cryptography (secp256k1 for Ethereum compatibility)
-    pub fn signTransaction(self: *WalletCompat, tx_data: []const u8, realid_private_key: sigil.RealIDPrivateKey) ![]u8 {
-        // Use Shroud's cryptography to sign with secp256k1 for Ethereum compatibility
-        const signature = try ghostcipher.zcrypto.asym.sign(&realid_private_key.bytes, tx_data, self.allocator);
-        defer self.allocator.free(signature);
-        
-        // Format as Ethereum transaction format (simplified)
-        var signed_tx = try self.allocator.alloc(u8, signature.len * 2 + 2); // hex encoding + 0x
-        signed_tx[0] = '0';
-        signed_tx[1] = 'x';
-        
-        const hex_chars = "0123456789abcdef";
-        for (signature, 0..) |byte, i| {
-            signed_tx[2 + i * 2] = hex_chars[byte >> 4];
-            signed_tx[2 + i * 2 + 1] = hex_chars[byte & 0xF];
-        }
-        
-        return signed_tx;
+    /// Sign transaction (placeholder implementation)
+    pub fn signTransaction(self: *WalletCompat, tx_data: []const u8, private_key: []const u8) ![]u8 {
+        _ = tx_data;
+        _ = private_key;
+        // Return mock signature for now
+        return self.allocator.dupe(u8, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
     }
 };
 
@@ -392,17 +336,14 @@ test "Ethereum RPC error handling" {
     try std.testing.expect(std.mem.indexOf(u8, response, "Method not found") != null);
 }
 
-test "Shroud wallet compatibility" {
+test "Wallet compatibility" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     
     var wallet = WalletCompat.init(arena.allocator());
     
-    // Generate RealID keypair
-    const keypair = try sigil.realid_generate_from_passphrase("test_passphrase");
-    
-    // Generate Ethereum address from RealID public key
-    const eth_addr = try wallet.generateEthAddress(keypair.public_key);
+    // Generate Ethereum address from seed
+    const eth_addr = try wallet.generateEthAddress("test_seed");
     defer arena.allocator().free(eth_addr);
     
     // Should be valid Ethereum address format

@@ -32,32 +32,15 @@
     // Once all dependencies are fetched, `zig build` no longer requires
     // internet connectivity.
     .dependencies = .{
-        // Shroud - Unified crypto + networking stack (replaces zcrypto + zquic)
-        .shroud = .{
-            .url = "https://github.com/ghostkellz/shroud/archive/main.tar.gz",
-            .hash = "shroud-0.5.0-z7C8mUBi5Acgo0PJIvKPC33P79z0uzwYWEjs1ApNoli-",
-            .lazy = true,
+        .zsync = .{
+            .url = "https://github.com/ghostkellz/zsync/archive/refs/heads/main.tar.gz",
+            .hash = "zsync-0.3.2-KAuhed0XGADaOKjYNl34Ragvca2zBYqvoAsBV-AhkoLS",
         },
-        // TokioZ for async runtime
-        .TokioZ = .{
-            .url = "https://github.com/ghostkellz/tokioZ/archive/main.tar.gz",
-            .hash = "TokioZ-0.0.0-DgtPReljAgAuGaoLtQCm_E-UA_7j_TAGQ8kkV-mtjz4V",
-            .lazy = true,
-        },
-        // ZQLite for persistent database storage
         .zqlite = .{
-            .url = "https://github.com/ghostkellz/zqlite/archive/main.tar.gz",
-            .hash = "zqlite-0.8.0-0Cdu4tFyCABhTRW4RF-MAxDbRzeE-2FnfhJQ63d1nWFG",
+            .url = "https://github.com/ghostkellz/zqlite/archive/refs/heads/main.tar.gz",
+            .hash = "zqlite-1.2.0-0Cdu4gLkCgB0xsRQey9_4_EYcgTQ9NaiQM8Hvv43VBV2",
         },
     },
-    // Specifies the set of files and directories that are included in this package.
-    // Only files and directories listed here are included in the `hash` that
-    // is computed for this package. Only files listed here will remain on disk
-    // when using the zig package manager. As a rule of thumb, one should list
-    // files required for compilation plus any license(s).
-    // Paths are relative to the build root. Use the empty string (`""`) to refer to
-    // the build root itself.
-    // A directory listed here means that all files within, recursively, are included.
     .paths = .{
         "build.zig",
         "build.zig.zon",

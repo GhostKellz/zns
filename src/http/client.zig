@@ -1,49 +1,33 @@
 const std = @import("std");
-const shroud = @import("shroud");
-const ghostwire = shroud.ghostwire;
 
-/// Advanced HTTP client with HTTP/3, QUIC, and gRPC support
+/// HTTP client using Zig's standard library
 pub const HttpClient = struct {
     allocator: std.mem.Allocator,
-    ghostwire_client: ghostwire.HttpClient,
     
     pub const ClientConfig = struct {
         timeout_ms: u32 = 30000,
         max_redirects: u32 = 5,
-        user_agent: []const u8 = "ZNS-HTTP-Client/0.3.0",
+        user_agent: []const u8 = "ZNS-HTTP-Client/0.4.0",
         enable_compression: bool = true,
         enable_keep_alive: bool = true,
         verify_tls: bool = true,
-        preferred_protocol: ProtocolPreference = .http3,
-        enable_post_quantum: bool = true,
-        
-        pub const ProtocolPreference = enum {
-            http1_1,
-            http2, 
-            http3,
-            auto,
-        };
     };
     
     pub fn init(allocator: std.mem.Allocator) !HttpClient {
-        // Use ghostwire's default configuration
         return HttpClient{
             .allocator = allocator,
-            .ghostwire_client = ghostwire.HttpClient.init(allocator, .{}),
         };
     }
     
     pub fn initWithConfig(allocator: std.mem.Allocator, config: ClientConfig) !HttpClient {
-        _ = config; // Use config values for enhanced features
-        // Create HTTP client with default ghostwire config
+        _ = config;
         return HttpClient{
             .allocator = allocator,
-            .ghostwire_client = ghostwire.HttpClient.init(allocator, .{}),
         };
     }
     
     pub fn deinit(self: *HttpClient) void {
-        self.ghostwire_client.deinit();
+        _ = self;
     }
     
     pub const HttpResponse = struct {
@@ -64,25 +48,11 @@ pub const HttpClient = struct {
         headers: ?[]const HttpHeader = null,
         timeout_ms: u32 = 30000,
         enable_compression: bool = true,
-        preferred_protocol: ClientConfig.ProtocolPreference = .http3,
         retry_attempts: u32 = 3,
-        enable_post_quantum: bool = true,
     };
     
-    /// Make HTTP GET request with HTTP/3 and QUIC support
+    /// Make HTTP GET request using standard client
     pub fn get(self: *HttpClient, url: []const u8, options: RequestOptions) !HttpResponse {
-        // Try HTTP/3 first, fallback to standard HTTP
-        return self.getWithFallback(url, options);
-    }
-    
-    /// Make HTTP GET request with fallback to standard HTTP
-    pub fn getWithFallback(self: *HttpClient, url: []const u8, options: RequestOptions) !HttpResponse {
-        // For now, use standard HTTP until ghostwire issues are resolved
-        return self.getStandardHttp(url, options);
-    }
-    
-    /// Fallback HTTP GET using standard client
-    fn getStandardHttp(self: *HttpClient, url: []const u8, options: RequestOptions) !HttpResponse {
         _ = options;
         
         // Parse URL
@@ -115,20 +85,8 @@ pub const HttpClient = struct {
         };
     }
     
-    /// Make HTTP POST request with HTTP/3 and QUIC support
+    /// Make HTTP POST request using standard client
     pub fn post(self: *HttpClient, url: []const u8, body: []const u8, options: RequestOptions) !HttpResponse {
-        // Try HTTP/3 first, fallback to standard HTTP
-        return self.postWithFallback(url, body, options);
-    }
-    
-    /// Make HTTP POST request with fallback to standard HTTP
-    pub fn postWithFallback(self: *HttpClient, url: []const u8, body: []const u8, options: RequestOptions) !HttpResponse {
-        // For now, use standard HTTP until ghostwire issues are resolved
-        return self.postStandardHttp(url, body, options);
-    }
-    
-    /// Fallback HTTP POST using standard client
-    fn postStandardHttp(self: *HttpClient, url: []const u8, body: []const u8, options: RequestOptions) !HttpResponse {
         _ = options;
         
         // Parse URL

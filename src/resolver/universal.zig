@@ -94,7 +94,7 @@ pub const UniversalResolver = struct {
         var results = try self.allocator.alloc(types.CryptoAddress, domains.len);
         
         // For now, resolve sequentially
-        // TODO: Implement parallel resolution with TokioZ
+        // TODO: Implement parallel resolution with zsync
         for (domains, 0..) |domain, i| {
             results[i] = self.resolve(domain) catch |err| switch (err) {
                 error.DomainNotFound => try types.CryptoAddress.init(self.allocator, domain, .unknown, ""),
