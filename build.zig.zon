@@ -37,8 +37,8 @@
             .hash = "zsync-0.3.2-KAuhed0XGADaOKjYNl34Ragvca2zBYqvoAsBV-AhkoLS",
         },
         .zqlite = .{
-            .url = "https://github.com/ghostkellz/zqlite/archive/refs/heads/main.tar.gz",
-            .hash = "zqlite-1.2.0-0Cdu4gLkCgB0xsRQey9_4_EYcgTQ9NaiQM8Hvv43VBV2",
+            .url = "https://github.com/ghostkellz/zqlite/archive/main.tar.gz",
+            .hash = "zqlite-1.2.1-0Cdu4loCDAC76ydtuPGqRi57pBu2rPH3HB74rLBikIpv",
         },
     },
     .paths = .{
