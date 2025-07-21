@@ -18,7 +18,7 @@ To integrate GhostChain with Ethereum tooling:
   * `eth_call`
   * `eth_sendRawTransaction`
 * Serve over QUIC/HTTP3 using `ghostwire`
-* Use `ghostbridge` (gRPC or HTTP FFI) to forward requests to Zig modules
+* Use `ghostbridge` (gRPC or HTTP FFI) to forward requests to Zig module
 
 ### ✅ EVM-Compatible Execution
 
